@@ -1,29 +1,22 @@
-import streamlit as st
-import pandas as pd
-import joblib
+
 import os
+import joblib
+import numpy as np
+import pandas as pd
+import streamlit as st
 
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.pipeline import Pipeline
-
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression
 from sklearn.tree import DecisionTreeRegressor
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.ensemble import GradientBoostingRegressor
-
-from sklearn.metrics import (
-    r2_score,
-    mean_squared_error,
-    mean_absolute_error
-)
-
-import numpy as np
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 
 
 # ==========================================================
-# PAGE CONFIGURATION
+# 1. PAGE CONFIGURATION
 # ==========================================================
 
 st.set_page_config(
@@ -34,133 +27,472 @@ st.set_page_config(
 
 
 # ==========================================================
-# BASE DIRECTORY
+# 2. PROJECT PATHS
 # ==========================================================
 
 BASE_DIR = os.path.dirname(
-    os.path.dirname(
-        os.path.abspath(__file__)
-    )
+    os.path.dirname(os.path.abspath(__file__))
 )
-
-
-# ==========================================================
-# FILE PATHS
-# ==========================================================
 
 MODEL_PATH = os.path.join(
-    BASE_DIR,
-    "models",
-    "crop_yield_model.pkl"
+    BASE_DIR, "models", "crop_yield_model.pkl"
 )
-
-DATA_PATH = os.path.join(
-    BASE_DIR,
-    "data",
-    "yield_df.csv"
-)
-
-
-# ==========================================================
-# LOAD DATASET
-# ==========================================================
 
 DATA_DIR = os.path.join(
-    BASE_DIR,
-    "data",
-    "raw"
+    BASE_DIR, "data", "raw"
 )
+
+
+# ==========================================================
+# 3. LOAD DATASET
+# ==========================================================
 
 if not os.path.exists(DATA_DIR):
-    st.error("❌ Data folder not found!")
+    st.error("Data folder not found!")
     st.code(DATA_DIR)
     st.stop()
 
-csv_files = [
+csv_files = sorted([
     file for file in os.listdir(DATA_DIR)
     if file.lower().endswith(".csv")
-]
+])
 
-if len(csv_files) == 0:
-    st.error("❌ No CSV file found inside the data folder!")
-    st.code(DATA_DIR)
+if not csv_files:
+    st.error("No CSV file found inside data/raw!")
     st.stop()
 
-# Use the first CSV file found
-DATA_PATH = os.path.join(
-    DATA_DIR,
-    csv_files[0]
+data_filename = (
+    "yield_df.csv"
+    if "yield_df.csv" in csv_files
+    else csv_files[0]
 )
 
+DATA_PATH = os.path.join(DATA_DIR, data_filename)
+
 try:
-
     df = pd.read_csv(DATA_PATH)
-
-    # Remove unwanted CSV index column
-    df = df.drop(
+    df.drop(
         columns=["Unnamed: 0"],
-        errors="ignore"
+        errors="ignore",
+        inplace=True
     )
 
-except Exception as e:
-
-    st.error("❌ Unable to load dataset.")
-
-    st.code(str(e))
-
+except Exception as error:
+    st.error("Unable to load dataset.")
+    st.exception(error)
     st.stop()
 
 
 # ==========================================================
-# LOAD SAVED MODEL
+# 4. VALIDATE DATASET
+# ==========================================================
+
+required_columns = [
+    "Area",
+    "Item",
+    "Year",
+    "average_rain_fall_mm_per_year",
+    "pesticides_tonnes",
+    "avg_temp",
+    "hg/ha_yield"
+]
+
+missing_columns = [
+    column for column in required_columns
+    if column not in df.columns
+]
+
+if missing_columns:
+    st.error("Required columns are missing!")
+    st.write(missing_columns)
+    st.stop()
+
+
+# ==========================================================
+# 5. DATA CLEANING
+# ==========================================================
+
+numeric_columns = [
+    "Year",
+    "average_rain_fall_mm_per_year",
+    "pesticides_tonnes",
+    "avg_temp",
+    "hg/ha_yield"
+]
+
+for column in numeric_columns:
+    df[column] = pd.to_numeric(
+        df[column],
+        errors="coerce"
+    )
+
+df.dropna(
+    subset=required_columns,
+    inplace=True
+)
+
+df["Area"] = df["Area"].astype(str)
+df["Item"] = df["Item"].astype(str)
+
+df = df[df["hg/ha_yield"] >= 0].copy()
+
+if df.empty:
+    st.error("No valid records found in the dataset.")
+    st.stop()
+
+
+# ==========================================================
+# 6. LOAD TRAINED MODEL
 # ==========================================================
 
 if not os.path.exists(MODEL_PATH):
-
-    st.error("❌ Model file not found!")
-
+    st.error("Trained model file not found!")
     st.code(MODEL_PATH)
-
     st.stop()
 
-
 try:
-
     model = joblib.load(MODEL_PATH)
 
-except Exception as e:
-
-    st.error("❌ Unable to load the trained model.")
-
-    st.code(str(e))
-
+except Exception as error:
+    st.error("Unable to load trained model.")
+    st.exception(error)
     st.stop()
 
 
 # ==========================================================
-# CREATE OPTIONS
+# 7. CREATE DROPDOWN OPTIONS
 # ==========================================================
 
 crop_options = sorted(
-    df["Item"]
-    .dropna()
-    .unique()
-    .tolist()
+    df["Item"].unique().tolist()
 )
 
 area_options = sorted(
-    df["Area"]
-    .dropna()
-    .unique()
-    .tolist()
+    df["Area"].unique().tolist()
 )
 
 
 # ==========================================================
-# SIDEBAR
+# 8. CROP-SPECIFIC YIELD THRESHOLDS
+# ==========================================================
+
+def get_crop_thresholds(crop_name):
+
+    crop_data = df.loc[
+        df["Item"] == crop_name,
+        "hg/ha_yield"
+    ].dropna()
+
+    if crop_data.empty:
+        crop_data = df["hg/ha_yield"]
+
+    return {
+        "q25": float(crop_data.quantile(0.25)),
+        "q50": float(crop_data.quantile(0.50)),
+        "q75": float(crop_data.quantile(0.75)),
+        "average": float(crop_data.mean()),
+        "count": len(crop_data)
+    }
+
+
+def classify_yield(value, thresholds):
+
+    if value < thresholds["q25"]:
+        return (
+            "🔴 Poor",
+            "The predicted yield is in the lower "
+            "quarter of this crop's historical results."
+        )
+
+    elif value < thresholds["q50"]:
+        return (
+            "🟠 Average",
+            "The predicted yield is below the "
+            "historical middle value for this crop."
+        )
+
+    elif value < thresholds["q75"]:
+        return (
+            "🟡 Good",
+            "The predicted yield is above the "
+            "historical middle value for this crop."
+        )
+
+    else:
+        return (
+            "🟢 Excellent",
+            "The predicted yield is in the upper "
+            "quarter of this crop's historical results."
+        )
+
+
+# ==========================================================
+# 9. SELECT HISTORICAL COMPARISON DATA
+# ==========================================================
+
+def get_reference_data(crop_name, area_name):
+
+    crop_area_data = df[
+        (df["Item"] == crop_name) &
+        (df["Area"] == area_name)
+    ].copy()
+
+    crop_data = df[
+        df["Item"] == crop_name
+    ].copy()
+
+    # Prefer the selected crop and area.
+
+    if len(crop_area_data) >= 8:
+        return crop_area_data, "Selected crop and area"
+
+    # If insufficient, compare all areas for the crop.
+
+    if len(crop_data) >= 8:
+        return crop_data, "Selected crop across all areas"
+
+    # Last fallback.
+
+    return df.copy(), "Entire dataset (limited crop history)"
+
+
+# ==========================================================
+# 10. GENERATE CROP INSIGHTS
+# ==========================================================
+
+def generate_crop_insights(
+    crop_name,
+    area_name,
+    rainfall,
+    temperature,
+    pesticides,
+    predicted_yield
+):
+
+    reference, reference_label = get_reference_data(
+        crop_name,
+        area_name
+    )
+
+    high_yield_cutoff = reference[
+        "hg/ha_yield"
+    ].quantile(0.75)
+
+    high_yield_records = reference[
+        reference["hg/ha_yield"] >= high_yield_cutoff
+    ]
+
+    if high_yield_records.empty:
+        high_yield_records = reference
+
+    input_values = {
+        "Rainfall": (
+            rainfall,
+            "average_rain_fall_mm_per_year",
+            "mm/year"
+        ),
+
+        "Temperature": (
+            temperature,
+            "avg_temp",
+            "°C"
+        ),
+
+        "Pesticide usage": (
+            pesticides,
+            "pesticides_tonnes",
+            "tonnes"
+        )
+    }
+
+    possible_factors = []
+    recommendations = []
+    comparison_rows = []
+
+    for name, (user_value, column, unit) in input_values.items():
+
+        historical = pd.to_numeric(
+            reference[column],
+            errors="coerce"
+        ).dropna()
+
+        high_group = pd.to_numeric(
+            high_yield_records[column],
+            errors="coerce"
+        ).dropna()
+
+        if historical.empty:
+            continue
+
+        q25 = historical.quantile(0.25)
+        median = historical.median()
+        q75 = historical.quantile(0.75)
+
+        high_median = (
+            high_group.median()
+            if not high_group.empty
+            else median
+        )
+
+        if user_value < q25:
+
+            comparison = "Below usual range"
+
+            possible_factors.append(
+                f"{name} is lower than the usual "
+                "historical range for this comparison group."
+            )
+
+            if name == "Rainfall":
+
+                recommendations.append(
+                    "Check whether the crop is receiving "
+                    "enough water. Review irrigation "
+                    "availability and the crop's water needs."
+                )
+
+            elif name == "Temperature":
+
+                recommendations.append(
+                    "Check whether the temperature is "
+                    "suitable for this crop's growing period."
+                )
+
+            else:
+
+                recommendations.append(
+                    "Monitor pests and diseases. Check "
+                    "whether pest control is needed before "
+                    "making pesticide-use decisions."
+                )
+
+        elif user_value > q75:
+
+            comparison = "Above usual range"
+
+            possible_factors.append(
+                f"{name} is higher than the usual "
+                "historical range for this comparison group."
+            )
+
+            if name == "Rainfall":
+
+                recommendations.append(
+                    "Check field drainage and watch for "
+                    "excess water or waterlogging."
+                )
+
+            elif name == "Temperature":
+
+                recommendations.append(
+                    "Check for signs of heat stress and "
+                    "whether the crop is suitable for "
+                    "these temperature conditions."
+                )
+
+            else:
+
+                recommendations.append(
+                    "Check whether the pesticide and its "
+                    "quantity are suitable for this crop. "
+                    "Avoid unnecessary pesticide use."
+                )
+
+        else:
+
+            comparison = "Within usual range"
+
+        comparison_rows.append({
+
+            "Parameter": name,
+
+            "Your Input": (
+                f"{user_value:,.2f} {unit}"
+            ),
+
+            "Historical Lower Level": (
+                f"{q25:,.2f} {unit}"
+            ),
+
+            "Historical Middle Value": (
+                f"{median:,.2f} {unit}"
+            ),
+
+            "Historical Upper Level": (
+                f"{q75:,.2f} {unit}"
+            ),
+
+            "Result": comparison
+
+        })
+
+    if not possible_factors:
+
+        possible_factors.append(
+            "Rainfall, temperature and pesticide usage "
+            "are within their usual historical ranges. "
+            "Other farming conditions may still affect yield."
+        )
+
+    if predicted_yield >= high_yield_cutoff:
+
+        yield_context = (
+            "The predicted yield is at or above the "
+            "upper quarter of historical yields in "
+            "the comparison group."
+        )
+
+        recommendations.append(
+            "Continue monitoring crop health and field "
+            "conditions. Compare the actual harvest "
+            "with this prediction."
+        )
+
+    else:
+
+        yield_context = (
+            "The predicted yield is below the upper "
+            "quarter of historical yields in the "
+            "comparison group."
+        )
+
+        recommendations.append(
+            "Check soil quality, seed variety, irrigation, "
+            "sowing time, pest problems and farming methods."
+        )
+
+    recommendations = list(
+        dict.fromkeys(recommendations)
+    )
+
+    return {
+
+        "reference_label": reference_label,
+
+        "reference_count": len(reference),
+
+        "high_yield_cutoff": float(high_yield_cutoff),
+
+        "yield_context": yield_context,
+
+        "possible_factors": possible_factors,
+
+        "recommendations": recommendations,
+
+        "comparison_table": pd.DataFrame(comparison_rows)
+
+    }
+
+
+# ==========================================================
+# 11. SIDEBAR NAVIGATION
 # ==========================================================
 
 st.sidebar.title("🌾 Crop Yield Prediction")
+
+st.sidebar.caption(
+    "Machine Learning Based Agricultural Analysis"
+)
 
 st.sidebar.divider()
 
@@ -175,9 +507,13 @@ page = st.sidebar.radio(
     ]
 )
 
+st.sidebar.divider()
+
+st.sidebar.caption("Yield unit: hg/ha")
+
 
 # ==========================================================
-# HOME PAGE
+# 12. HOME PAGE
 # ==========================================================
 
 if page == "🏠 Home":
@@ -193,6 +529,9 @@ if page == "🏠 Home":
         This application uses Machine Learning to predict
         crop yield based on agricultural and environmental
         conditions.
+
+        It also compares user inputs with historical records
+        to identify possible factors worth investigating.
         """
     )
 
@@ -200,52 +539,48 @@ if page == "🏠 Home":
 
     col1, col2, col3 = st.columns(3)
 
-    with col1:
+    col1.metric(
+        "🌱 Crops",
+        df["Item"].nunique()
+    )
 
-        st.metric(
-            "🌱 Crops",
-            df["Item"].nunique()
-        )
+    col2.metric(
+        "🌍 Areas",
+        df["Area"].nunique()
+    )
 
-    with col2:
-
-        st.metric(
-            "🌍 Areas",
-            df["Area"].nunique()
-        )
-
-    with col3:
-
-        st.metric(
-            "📊 Records",
-            len(df)
-        )
+    col3.metric(
+        "📊 Records",
+        f"{len(df):,}"
+    )
 
     st.divider()
 
     st.subheader("📌 Project Features")
 
-    st.write(
+    st.markdown(
         """
-        • Crop yield prediction
-
-        • Crop and area selection
-
-        • Rainfall analysis
-
-        • Temperature analysis
-
-        • Crop yield comparison
-
-        • Model performance evaluation
-
-        • Interactive data visualization
+        - Crop yield prediction
+        - Crop and area selection
+        - Crop-specific yield classification
+        - Historical yield comparison
+        - Rainfall analysis
+        - Temperature analysis
+        - Model performance evaluation
+        - Prediction-based data analysis
+        - Possible reasons for low or high yield
+        - Suggestions for further investigation
         """
+    )
+
+    st.info(
+        "Insights are based on historical patterns. "
+        "They do not prove cause and effect."
     )
 
 
 # ==========================================================
-# PREDICT YIELD PAGE
+# 13. PREDICT YIELD PAGE
 # ==========================================================
 
 elif page == "🔮 Predict Yield":
@@ -253,15 +588,10 @@ elif page == "🔮 Predict Yield":
     st.title("🔮 Predict Crop Yield")
 
     st.write(
-        "Enter the agricultural information below "
-        "to predict crop yield."
+        "Enter agricultural information to predict crop yield."
     )
 
     st.divider()
-
-    # ======================================================
-    # PHASE 24 — USER INPUT
-    # ======================================================
 
     st.subheader("🌱 Crop Information")
 
@@ -307,10 +637,6 @@ elif page == "🔮 Predict Yield":
 
     st.divider()
 
-    # ======================================================
-    # PHASE 25 — MAKE PREDICTION
-    # ======================================================
-
     if st.button(
         "🌾 Predict Yield",
         use_container_width=True
@@ -335,78 +661,240 @@ elif page == "🔮 Predict Yield":
             "avg_temp": [
                 temperature
             ]
+
         })
 
         try:
 
-            prediction = model.predict(
-                input_data
-            )
+            # MODEL PREDICTION
 
-            st.success("Prediction completed!")
-
-            st.subheader("🌾 Predicted Yield")
+            prediction = model.predict(input_data)
 
             predicted_yield = float(prediction[0])
 
-            st.metric(
-                label="Predicted Yield",
-                value=f"{predicted_yield:,.2f} hg/ha"
+            if not np.isfinite(predicted_yield):
+                raise ValueError(
+                    "The model returned an invalid prediction."
+                )
+
+            # CROP-SPECIFIC CLASSIFICATION
+
+            thresholds = get_crop_thresholds(crop)
+
+            status, status_message = classify_yield(
+                predicted_yield,
+                thresholds
             )
 
-            st.info(
-                "This prediction is based on the selected crop, area, year, "
-                "rainfall, pesticide usage, and average temperature."
+            # GENERATE INSIGHTS
+
+            insights = generate_crop_insights(
+                crop,
+                area,
+                rainfall,
+                temperature,
+                pesticides,
+                predicted_yield
             )
 
-            predicted_yield = float(
-                prediction[0]
-            )
+            # SAVE LATEST PREDICTION FOR DATA ANALYSIS PAGE
+
+            st.session_state["last_prediction"] = {
+
+                "crop": crop,
+
+                "area": area,
+
+                "year": int(year),
+
+                "rainfall": rainfall,
+
+                "temperature": temperature,
+
+                "pesticides": pesticides,
+
+                "predicted_yield": predicted_yield,
+
+                "status": status,
+
+                "status_message": status_message,
+
+                "thresholds": thresholds,
+
+                "insights": insights
+
+            }
 
             st.success(
-                f"🌾 Predicted Yield: "
+                "✅ Prediction completed successfully!"
+            )
+
+            # --------------------------------------------------
+            # PREDICTED YIELD
+            # --------------------------------------------------
+
+            st.subheader("🌾 Predicted Crop Yield")
+
+            st.metric(
+                "Predicted Yield",
                 f"{predicted_yield:,.2f} hg/ha"
             )
 
             st.divider()
 
-            st.subheader(
-                "📋 Prediction Details"
+            # --------------------------------------------------
+            # YIELD STATUS
+            # --------------------------------------------------
+
+            st.subheader("📊 Yield Status")
+
+            col1, col2 = st.columns(2)
+
+            col1.metric(
+                "Yield Category",
+                status
             )
+
+            col2.metric(
+                f"{crop} Historical Average",
+                f"{thresholds['average']:,.2f} hg/ha"
+            )
+
+            if "Poor" in status:
+
+                st.warning(status_message)
+
+            elif "Average" in status:
+
+                st.info(status_message)
+
+            else:
+
+                st.success(status_message)
+
+            st.caption(
+                f"Classification uses {thresholds['count']:,} "
+                f"historical records for {crop}."
+            )
+
+            st.divider()
+
+            # --------------------------------------------------
+            # PREDICTION INTERPRETATION
+            # --------------------------------------------------
+
+            st.subheader("📌 Prediction Interpretation")
+
+            st.write(
+                f"""
+                The model predicts **{predicted_yield:,.2f} hg/ha**
+                for **{crop}** in **{area}** during **{int(year)}**.
+
+                The predicted result is classified as **{status}**
+                based on the historical yield distribution of
+                the selected crop.
+                """
+            )
+
+            st.divider()
+
+            # --------------------------------------------------
+            # CROP YIELD INSIGHTS
+            # --------------------------------------------------
+
+            st.header(
+                "🔍 Crop Yield Insights & Recommendations"
+            )
+
+            st.write(
+                """
+                This section compares your input values with
+                historical records to identify conditions
+                that may deserve attention.
+                """
+            )
+
+            st.caption(
+                f"Comparison basis: {insights['reference_label']} "
+                f"({insights['reference_count']:,} records)."
+            )
+
+            st.subheader(
+                "Possible Factors to Investigate"
+            )
+
+            for factor in insights["possible_factors"]:
+
+                st.markdown(f"- {factor}")
+
+            st.subheader(
+                "📈 Historical Input Comparison"
+            )
+
+            if not insights["comparison_table"].empty:
+
+                st.dataframe(
+                    insights["comparison_table"],
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            else:
+
+                st.info(
+                    "Not enough historical information for comparison."
+                )
+
+            st.write(insights["yield_context"])
+
+            st.subheader(
+                "💡 Recommendations"
+            )
+
+            for recommendation in insights["recommendations"]:
+
+                st.markdown(f"- {recommendation}")
+
+            st.caption(
+                "These suggestions are based on historical data, "
+                "not confirmed causes. Soil quality, seeds, irrigation, "
+                "sowing time, pests and farming methods can also "
+                "affect crop yield. Pesticide usage alone cannot "
+                "show whether pest control was effective."
+            )
+
+            st.divider()
+
+            # --------------------------------------------------
+            # PREDICTION DETAILS
+            # --------------------------------------------------
+
+            st.subheader("📋 Prediction Details")
 
             display_data = pd.DataFrame({
 
                 "Parameter": [
-
                     "Crop",
-
                     "Area / Country",
-
                     "Year",
-
                     "Rainfall",
-
                     "Temperature",
-
-                    "Pesticides"
-
+                    "Pesticides",
+                    "Predicted Yield",
+                    "Yield Status"
                 ],
 
                 "Value": [
-
                     crop,
-
                     area,
-
-                    year,
-
+                    int(year),
                     f"{rainfall:,.2f} mm/year",
-
                     f"{temperature:.2f} °C",
-
-                    f"{pesticides:,.2f} tonnes"
-
+                    f"{pesticides:,.2f} tonnes",
+                    f"{predicted_yield:,.2f} hg/ha",
+                    status
                 ]
+
             })
 
             st.dataframe(
@@ -415,118 +903,411 @@ elif page == "🔮 Predict Yield":
                 hide_index=True
             )
 
-        except Exception as e:
+            st.divider()
 
-            st.error(
-                "❌ Prediction failed."
+            # --------------------------------------------------
+            # CROP-SPECIFIC CLASSIFICATION RANGE
+            # --------------------------------------------------
+
+            st.subheader(
+                "📈 Crop Yield Classification Range"
             )
 
-            st.code(str(e))
+            col1, col2, col3 = st.columns(3)
+
+            col1.metric(
+                "Poor (below 25th percentile)",
+                f"< {thresholds['q25']:,.2f} hg/ha"
+            )
+
+            col2.metric(
+                "Median (50th percentile)",
+                f"{thresholds['q50']:,.2f} hg/ha"
+            )
+
+            col3.metric(
+                "Excellent (75th percentile and above)",
+                f"≥ {thresholds['q75']:,.2f} hg/ha"
+            )
+
+        except Exception as error:
+
+            st.error("Prediction failed.")
+
+            st.exception(error)
 
 
 # ==========================================================
-# PHASE 26 — DATA ANALYSIS PAGE
+# 14. DATA ANALYSIS PAGE
+#     BASED ONLY ON THE LATEST PREDICTION
 # ==========================================================
 
 elif page == "📊 Data Analysis":
 
-    st.title("📊 Data Analysis")
+    st.title("📊 Prediction Analysis")
 
     st.write(
-        "Explore crop yield patterns and relationships "
-        "in the dataset."
+        """
+        Understand your predicted crop yield through
+        historical comparisons and simple explanations.
+        """
     )
 
     st.divider()
 
-    # ======================================================
-    # YIELD DISTRIBUTION
-    # ======================================================
+    # CHECK WHETHER A PREDICTION EXISTS
 
-    st.subheader(
-        "📊 Yield Distribution"
-    )
+    if "last_prediction" not in st.session_state:
 
-    yield_distribution = (
-        df["hg/ha_yield"]
-        .value_counts()
-        .sort_index()
-    )
+        st.info(
+            """
+            No prediction is available yet.
 
-    st.bar_chart(
-        yield_distribution
-    )
-
-    st.divider()
-
-    # ======================================================
-    # AVERAGE YIELD BY CROP
-    # ======================================================
-
-    st.subheader(
-        "🌾 Average Yield by Crop"
-    )
-
-    average_yield_by_crop = (
-
-        df.groupby("Item")["hg/ha_yield"]
-
-        .mean()
-
-        .sort_values(
-            ascending=False
+            Please visit the Predict Yield page and generate
+            a crop yield prediction first. Your prediction
+            analysis will appear here.
+            """
         )
-    )
 
-    st.bar_chart(
-        average_yield_by_crop
-    )
+    else:
 
-    st.divider()
+        result = st.session_state["last_prediction"]
 
-    # ======================================================
-    # RAINFALL VS YIELD
-    # ======================================================
+        crop = result["crop"]
+        area = result["area"]
+        year = result["year"]
 
-    st.subheader(
-        "🌧️ Rainfall vs Yield"
-    )
+        predicted_yield = result["predicted_yield"]
 
-    rainfall_yield = df[
-        [
-            "average_rain_fall_mm_per_year",
-            "hg/ha_yield"
+        status = result["status"]
+
+        thresholds = result["thresholds"]
+
+        insights = result["insights"]
+
+        # --------------------------------------------------
+        # 1. PREDICTION SUMMARY
+        # --------------------------------------------------
+
+        st.subheader("🌾 Your Prediction Summary")
+
+        col1, col2, col3 = st.columns(3)
+
+        col1.metric(
+            "Selected Crop",
+            crop
+        )
+
+        col2.metric(
+            "Selected Area",
+            area
+        )
+
+        col3.metric(
+            "Predicted Yield",
+            f"{predicted_yield:,.2f} hg/ha"
+        )
+
+        st.write(
+            f"**Prediction Year:** {year}"
+        )
+
+        if "Poor" in status:
+
+            st.warning(
+                f"Predicted Result: {status}"
+            )
+
+        elif "Average" in status:
+
+            st.info(
+                f"Predicted Result: {status}"
+            )
+
+        else:
+
+            st.success(
+                f"Predicted Result: {status}"
+            )
+
+        st.divider()
+
+        # --------------------------------------------------
+        # 2. HISTORICAL YIELD COMPARISON
+        # --------------------------------------------------
+
+        st.subheader(
+            "📈 How Does Your Prediction Compare?"
+        )
+
+        st.write(
+            f"""
+            The chart below compares your predicted yield
+            for **{crop}** with the historical yield levels
+            of the same crop.
+            """
+        )
+
+        comparison = pd.DataFrame({
+
+            "Yield Level": [
+                "Lower historical level",
+                "Historical median",
+                "Historical average",
+                "Upper historical level",
+                "Your prediction"
+            ],
+
+            "Yield (hg/ha)": [
+                thresholds["q25"],
+                thresholds["q50"],
+                thresholds["average"],
+                thresholds["q75"],
+                predicted_yield
+            ]
+
+        })
+
+        st.bar_chart(
+            comparison.set_index("Yield Level")
+        )
+
+        average = thresholds["average"]
+
+        difference = predicted_yield - average
+
+        if difference > 0:
+
+            st.success(
+                f"Your predicted yield is {difference:,.2f} hg/ha "
+                f"higher than the historical average for {crop}."
+            )
+
+        elif difference < 0:
+
+            st.warning(
+                f"Your predicted yield is {abs(difference):,.2f} "
+                f"hg/ha lower than the historical average for {crop}."
+            )
+
+        else:
+
+            st.info(
+                "Your predicted yield is equal to the historical average."
+            )
+
+        st.caption(
+            f"Historical comparison uses "
+            f"{thresholds['count']:,} records for {crop}."
+        )
+
+        st.divider()
+
+        # --------------------------------------------------
+        # 3. INPUT CONDITION ANALYSIS
+        # --------------------------------------------------
+
+        st.subheader(
+            "🌦️ Analysis of Your Input Conditions"
+        )
+
+        st.write(
+            """
+            The following section checks whether your rainfall,
+            temperature and pesticide values are within the
+            usual historical ranges for the selected crop
+            and area, where enough records are available.
+            """
+        )
+
+        reference, reference_label = get_reference_data(
+            crop,
+            area
+        )
+
+        input_details = [
+
+            (
+                "🌧️ Rainfall",
+                result["rainfall"],
+                "average_rain_fall_mm_per_year",
+                "mm/year"
+            ),
+
+            (
+                "🌡️ Temperature",
+                result["temperature"],
+                "avg_temp",
+                "°C"
+            ),
+
+            (
+                "🧪 Pesticide Usage",
+                result["pesticides"],
+                "pesticides_tonnes",
+                "tonnes"
+            )
+
         ]
-    ].dropna()
 
-    st.scatter_chart(
-        rainfall_yield
-    )
+        for name, user_value, column, unit in input_details:
 
-    st.divider()
+            historical = pd.to_numeric(
+                reference[column],
+                errors="coerce"
+            ).dropna()
 
-    # ======================================================
-    # TEMPERATURE VS YIELD
-    # ======================================================
+            if historical.empty:
+                continue
 
-    st.subheader(
-        "🌡️ Temperature vs Yield"
-    )
+            q25 = historical.quantile(0.25)
+            q75 = historical.quantile(0.75)
 
-    temperature_yield = df[
-        [
-            "avg_temp",
-            "hg/ha_yield"
-        ]
-    ].dropna()
+            st.markdown(f"**{name}**")
 
-    st.scatter_chart(
-        temperature_yield
-    )
+            col1, col2 = st.columns(2)
+
+            col1.metric(
+                "Your Input",
+                f"{user_value:,.2f} {unit}"
+            )
+
+            col2.metric(
+                "Usual Historical Range",
+                f"{q25:,.2f} – {q75:,.2f} {unit}"
+            )
+
+            if user_value < q25:
+
+                st.warning(
+                    f"{name} is lower than the usual "
+                    "historical range."
+                )
+
+            elif user_value > q75:
+
+                st.warning(
+                    f"{name} is higher than the usual "
+                    "historical range."
+                )
+
+            else:
+
+                st.success(
+                    f"{name} is within the usual "
+                    "historical range."
+                )
+
+            st.divider()
+
+        st.caption(
+            f"Historical comparison: {reference_label} "
+            f"({len(reference):,} records)."
+        )
+
+        # --------------------------------------------------
+        # 4. POSSIBLE FACTORS
+        # --------------------------------------------------
+
+        st.subheader(
+            "🔍 What May Need Attention?"
+        )
+
+        for factor in insights["possible_factors"]:
+
+            st.markdown(f"- {factor}")
+
+        st.divider()
+
+        # --------------------------------------------------
+        # 5. SUGGESTIONS
+        # --------------------------------------------------
+
+        st.subheader(
+            "💡 Suggestions"
+        )
+
+        for recommendation in insights["recommendations"]:
+
+            st.markdown(f"- {recommendation}")
+
+        st.divider()
+
+        # --------------------------------------------------
+        # 6. OVERALL PREDICTION EXPLANATION
+        # --------------------------------------------------
+
+        st.subheader(
+            "📝 Overall Prediction Explanation"
+        )
+
+        st.write(
+            f"""
+            For **{crop}** in **{area}** during **{year}**,
+            the model predicts a yield of
+            **{predicted_yield:,.2f} hg/ha**.
+
+            The predicted result is classified as **{status}**
+            when compared with the historical yield levels
+            of the selected crop.
+
+            The input analysis identifies conditions that
+            may deserve further attention.
+            """
+        )
+
+        st.caption(
+            "These comparisons show historical patterns, "
+            "not confirmed causes of crop yield. Actual yield "
+            "can also depend on soil quality, seeds, irrigation, "
+            "sowing time, pests and farming methods. "
+            "The model does not identify the exact cause "
+            "of a predicted result."
+        )
+
+        st.divider()
+
+        # --------------------------------------------------
+        # 7. VIEW PREDICTION INPUTS
+        # --------------------------------------------------
+
+        with st.expander("📋 View Your Prediction Details"):
+
+            prediction_details = pd.DataFrame({
+
+                "Parameter": [
+                    "Crop",
+                    "Area",
+                    "Year",
+                    "Rainfall",
+                    "Temperature",
+                    "Pesticides",
+                    "Predicted Yield",
+                    "Yield Category"
+                ],
+
+                "Value": [
+                    crop,
+                    area,
+                    year,
+                    f"{result['rainfall']:,.2f} mm/year",
+                    f"{result['temperature']:.2f} °C",
+                    f"{result['pesticides']:,.2f} tonnes",
+                    f"{predicted_yield:,.2f} hg/ha",
+                    status
+                ]
+
+            })
+
+            st.dataframe(
+                prediction_details,
+                use_container_width=True,
+                hide_index=True
+            )
 
 
 # ==========================================================
-# PHASE 27 — MODEL PERFORMANCE PAGE
+# 15. MODEL PERFORMANCE PAGE
 # ==========================================================
 
 elif page == "🤖 Model Performance":
@@ -534,20 +1315,29 @@ elif page == "🤖 Model Performance":
     st.title("🤖 Model Performance")
 
     st.write(
-        "Compare the performance of the Machine Learning "
+        "Compare the performance of different Machine Learning "
         "models used for crop yield prediction."
+    )
+
+    st.info(
+        "This page trains the comparison models when opened. "
+        "It may take some time."
     )
 
     st.divider()
 
-    # ======================================================
     # FEATURES AND TARGET
-    # ======================================================
 
-    X = df.drop(
-        "hg/ha_yield",
-        axis=1
-    )
+    X = df[
+        [
+            "Area",
+            "Item",
+            "Year",
+            "average_rain_fall_mm_per_year",
+            "pesticides_tonnes",
+            "avg_temp"
+        ]
+    ]
 
     y = df["hg/ha_yield"]
 
@@ -556,54 +1346,16 @@ elif page == "🤖 Model Performance":
         "Item"
     ]
 
-    numerical_features = [
-        "Year",
-        "average_rain_fall_mm_per_year",
-        "pesticides_tonnes",
-        "avg_temp"
-    ]
-
-    # ======================================================
-    # PREPROCESSOR
-    # ======================================================
-
-    preprocessor = ColumnTransformer(
-
-        transformers=[
-
-            (
-                "categorical",
-
-                OneHotEncoder(
-                    handle_unknown="ignore"
-                ),
-
-                categorical_features
-            )
-
-        ],
-
-        remainder="passthrough"
-    )
-
-    # ======================================================
     # TRAIN TEST SPLIT
-    # ======================================================
 
     X_train, X_test, y_train, y_test = train_test_split(
-
         X,
-
         y,
-
         test_size=0.2,
-
         random_state=42
     )
 
-    # ======================================================
-    # CREATE MODELS
-    # ======================================================
+    # MODELS
 
     models = {
 
@@ -626,177 +1378,136 @@ elif page == "🤖 Model Performance":
             GradientBoostingRegressor(
                 random_state=42
             )
-    }
 
-    # ======================================================
-    # CALCULATE METRICS
-    # ======================================================
+    }
 
     results = []
 
-    trained_models = {}
+    with st.spinner("Training and evaluating models..."):
 
-    for name, algorithm in models.items():
+        for name, algorithm in models.items():
 
-        pipeline = Pipeline([
+            preprocessor = ColumnTransformer(
 
-            (
-                "preprocessor",
-                preprocessor
-            ),
+                transformers=[
 
-            (
-                "model",
-                algorithm
+                    (
+                        "categorical",
+
+                        OneHotEncoder(
+                            handle_unknown="ignore"
+                        ),
+
+                        categorical_features
+                    )
+
+                ],
+
+                remainder="passthrough"
             )
-        ])
 
-        pipeline.fit(
-            X_train,
-            y_train
-        )
+            pipeline = Pipeline([
 
-        predictions = pipeline.predict(
-            X_test
-        )
+                (
+                    "preprocessor",
+                    preprocessor
+                ),
 
-        r2 = r2_score(
-            y_test,
-            predictions
-        )
+                (
+                    "model",
+                    algorithm
+                )
 
-        rmse = np.sqrt(
-            mean_squared_error(
-                y_test,
-                predictions
+            ])
+
+            pipeline.fit(
+                X_train,
+                y_train
             )
-        )
 
-        mae = mean_absolute_error(
-            y_test,
-            predictions
-        )
+            predictions = pipeline.predict(
+                X_test
+            )
 
-        results.append({
+            results.append({
 
-            "Model": name,
+                "Model": name,
 
-            "R²": r2,
+                "R²": r2_score(
+                    y_test,
+                    predictions
+                ),
 
-            "RMSE": rmse,
+                "RMSE": np.sqrt(
+                    mean_squared_error(
+                        y_test,
+                        predictions
+                    )
+                ),
 
-            "MAE": mae
-        })
+                "MAE": mean_absolute_error(
+                    y_test,
+                    predictions
+                )
 
-        trained_models[name] = pipeline
+            })
 
-    # ======================================================
-    # RESULTS DATAFRAME
-    # ======================================================
+    results_df = pd.DataFrame(results)
 
-    results_df = pd.DataFrame(
-        results
-    )
-
-    # ======================================================
-    # FIND BEST MODEL
-    # ======================================================
-
-    best_index = results_df[
-        "R²"
-    ].idxmax()
-
-    best_model_name = results_df.loc[
-        best_index,
-        "Model"
-    ]
-
-    best_r2 = results_df.loc[
-        best_index,
-        "R²"
-    ]
-
-    best_rmse = results_df.loc[
-        best_index,
-        "RMSE"
-    ]
-
-    best_mae = results_df.loc[
-        best_index,
-        "MAE"
-    ]
-
-    # ======================================================
     # BEST MODEL
-    # ======================================================
+
+    best_row = results_df.loc[
+        results_df["R²"].idxmax()
+    ]
 
     st.subheader(
-        "🏆 Best Model"
+        "🏆 Best Model on This Test Split"
     )
 
     st.success(
-        f"Best Model: {best_model_name}"
+        f"Best Model: {best_row['Model']}"
     )
-
-    # ======================================================
-    # METRIC CARDS
-    # ======================================================
 
     col1, col2, col3, col4 = st.columns(4)
 
-    with col1:
+    col1.metric(
+        "Best Model",
+        best_row["Model"]
+    )
 
-        st.metric(
-            "🏆 Best Model",
-            best_model_name
-        )
+    col2.metric(
+        "R² Score",
+        f"{best_row['R²']:.4f}"
+    )
 
-    with col2:
+    col3.metric(
+        "RMSE",
+        f"{best_row['RMSE']:,.2f}"
+    )
 
-        st.metric(
-            "R²",
-            f"{best_r2:.4f}"
-        )
-
-    with col3:
-
-        st.metric(
-            "RMSE",
-            f"{best_rmse:.2f}"
-        )
-
-    with col4:
-
-        st.metric(
-            "MAE",
-            f"{best_mae:.2f}"
-        )
+    col4.metric(
+        "MAE",
+        f"{best_row['MAE']:,.2f}"
+    )
 
     st.divider()
 
-    # ======================================================
-    # MODEL COMPARISON
-    # ======================================================
+    # MODEL COMPARISON TABLE
 
-    st.subheader(
-        "📊 Model Comparison"
-    )
+    st.subheader("📊 Model Comparison")
 
     formatted_results = results_df.copy()
 
     formatted_results["R²"] = (
-        formatted_results["R²"]
-        .round(4)
+        formatted_results["R²"].round(4)
     )
 
     formatted_results["RMSE"] = (
-        formatted_results["RMSE"]
-        .round(2)
+        formatted_results["RMSE"].round(2)
     )
 
     formatted_results["MAE"] = (
-        formatted_results["MAE"]
-        .round(2)
+        formatted_results["MAE"].round(2)
     )
 
     st.dataframe(
@@ -805,109 +1516,118 @@ elif page == "🤖 Model Performance":
         hide_index=True
     )
 
-    # ======================================================
-    # R² COMPARISON
-    # ======================================================
+    st.divider()
 
-    st.subheader(
-        "📈 R² Score Comparison"
-    )
+    # R2 CHART
 
-    r2_chart = results_df.set_index(
-        "Model"
-    )[["R²"]]
+    st.subheader("📈 R² Score Comparison")
 
     st.bar_chart(
-        r2_chart
+        results_df.set_index("Model")[["R²"]]
     )
 
-    st.info(
-        f"ℹ️ {best_model_name} achieved the highest "
-        f"R² score on the test dataset."
+    # ERROR CHART
+
+    st.subheader("📉 Error Comparison")
+
+    st.bar_chart(
+        results_df.set_index("Model")[["RMSE", "MAE"]]
+    )
+
+    st.caption(
+        "These metrics describe this particular random test split. "
+        "They do not guarantee identical performance on future data."
     )
 
 
 # ==========================================================
-# ABOUT PAGE
+# 16. ABOUT PAGE
 # ==========================================================
 
 elif page == "ℹ️ About":
 
-    st.title(
-        "ℹ️ About the Project"
-    )
-
-    st.subheader(
-        "🌾 Crop Yield Prediction using Machine Learning"
-    )
+    st.title("ℹ️ About the Project")
 
     st.write(
         """
-        This project predicts agricultural crop yield
-        using Machine Learning techniques.
+        Crop Yield Prediction is a Machine Learning application
+        that predicts crop yield using historical agricultural
+        and environmental information.
         """
     )
 
     st.divider()
 
-    st.subheader(
-        "📌 Input Features"
+    st.subheader("🌱 Input Features")
+
+    st.markdown(
+        """
+        - **Crop:** Selected crop type.
+        - **Area / Country:** Selected geographical area.
+        - **Year:** Year of prediction.
+        - **Rainfall:** Average annual rainfall in mm/year.
+        - **Temperature:** Average temperature in °C.
+        - **Pesticides:** Pesticide usage in tonnes.
+        """
     )
+
+    st.divider()
+
+    st.subheader("🤖 Machine Learning")
 
     st.write(
         """
-        • Area / Country
+        The prediction page uses the trained model saved in
+        `models/crop_yield_model.pkl`.
 
-        • Crop
+        The Model Performance page compares:
 
-        • Year
-
-        • Average Rainfall
-
-        • Pesticides
-
-        • Average Temperature
+        - Linear Regression
+        - Decision Tree
+        - Random Forest
+        - Gradient Boosting
         """
     )
 
-    st.subheader(
-        "🤖 Machine Learning Models"
-    )
+    st.divider()
+
+    st.subheader("🔍 Prediction Analysis")
 
     st.write(
         """
-        • Linear Regression
+        The Data Analysis page is based on the latest prediction.
 
-        • Decision Tree Regressor
+        It compares the predicted yield and the entered
+        agricultural conditions with historical records.
 
-        • Random Forest Regressor
-
-        • Gradient Boosting Regressor
+        It also provides simple explanations and suggestions
+        for further investigation.
         """
     )
 
-    st.subheader(
-        "📊 Evaluation Metrics"
+    st.caption(
+        "The analysis identifies historical patterns, not proven "
+        "causes. The dataset does not include every factor that "
+        "affects crop yield, such as soil quality, seed variety, "
+        "irrigation, sowing date, pest pressure and farming practices."
     )
 
-    st.write(
+    st.divider()
+
+    st.subheader("📏 Evaluation Metrics")
+
+    st.markdown(
         """
-        R² Score:
-        Measures how well the model explains the variation
-        in crop yield.
-
-        RMSE:
-        Measures the average size of prediction errors,
-        giving more weight to large errors.
-
-        MAE:
-        Measures the average absolute prediction error.
+        - **R²:** Indicates how much variation in yield is
+          explained by the model on evaluation data.
+        - **RMSE:** Measures prediction error and gives
+          greater weight to large errors.
+        - **MAE:** Measures the average absolute prediction error.
         """
     )
 
     st.divider()
 
     st.caption(
-        "🌾 Crop Yield Prediction System | "
-        "Machine Learning Project"
+        "Dataset: CSV file stored in the project's data/raw folder."
     )
