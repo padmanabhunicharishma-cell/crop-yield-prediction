@@ -1424,6 +1424,7 @@ NAV_PAGES = [
     "🤖 Model Performance",
     "ℹ️ About",
     "💰 Profit Calculator",
+    "🌾 Multi-Crop Comparison",
 ]
 
 if "nav_page" not in st.session_state:
@@ -4388,3 +4389,447 @@ elif page == "💰 Profit Calculator":
 
 
 # ==========================================================
+# 20. MULTI-CROP YIELD COMPARISON PAGE
+# ==========================================================
+
+elif page == "\U0001f33e Multi-Crop Comparison":
+
+    render_page_header(
+        "\U0001f33e",
+        "Multi-Crop Yield Comparison",
+        "Compare predicted yields for multiple crops under identical environmental conditions.",
+        badge="ML Comparison \u00b7 hg/ha",
+    )
+
+    st.markdown(
+        '<div class="section-subtext">'
+        "Select 2\u20135 crops and one set of environmental conditions. "
+        "The existing trained model predicts the yield for every selected crop "
+        "using exactly the same inputs \u2014 only the crop name changes between predictions."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # ----------------------------------------------------------------
+    # STEP 1  Environmental condition inputs
+    # ----------------------------------------------------------------
+
+    st.write("")
+    with st.container(border=True):
+        st.markdown(
+            '<div class="section-heading">\U0001f30d Enter Environmental Conditions</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="input-group-label">Location &amp; Year</div>',
+            unsafe_allow_html=True,
+        )
+
+        _mc1, _mc2, _mc3 = st.columns(3)
+        with _mc1:
+            _mc_area = st.selectbox(
+                "Country / Area",
+                area_options,
+                key="mc_area",
+            )
+        with _mc2:
+            _mc_year = int(st.number_input(
+                "Year",
+                min_value=1961, max_value=2030,
+                value=2025, step=1,
+                key="mc_year",
+            ))
+        with _mc3:
+            st.write("")
+
+        st.markdown(
+            '<div class="input-group-label" style="margin-top:10px;">Climate &amp; Field Conditions</div>',
+            unsafe_allow_html=True,
+        )
+
+        _rf_min  = float(df["average_rain_fall_mm_per_year"].min())
+        _rf_max  = float(df["average_rain_fall_mm_per_year"].max())
+        _tmp_min = float(df["avg_temp"].min())
+        _tmp_max = float(df["avg_temp"].max())
+        _ps_min  = float(df["pesticides_tonnes"].min())
+        _ps_max  = float(df["pesticides_tonnes"].max())
+
+        _md1, _md2, _md3 = st.columns(3)
+        with _md1:
+            _mc_rain = st.number_input(
+                "Average Rainfall (mm/year)",
+                min_value=0.0,
+                value=1200.0, step=10.0,
+                key="mc_rain",
+                help=f"Dataset range: {_rf_min:,.0f} \u2013 {_rf_max:,.0f} mm/year",
+            )
+        with _md2:
+            _mc_temp = st.number_input(
+                "Average Temperature (\u00b0C)",
+                min_value=-10.0, max_value=60.0,
+                value=28.0, step=0.5,
+                key="mc_temp",
+                help=f"Dataset range: {_tmp_min:.1f} \u2013 {_tmp_max:.1f} \u00b0C",
+            )
+        with _md3:
+            _mc_pest = st.number_input(
+                "Pesticides Usage (tonnes)",
+                min_value=0.0,
+                value=1000.0, step=100.0,
+                key="mc_pest",
+                help=f"Dataset range: {_ps_min:,.0f} \u2013 {_ps_max:,.0f} tonnes",
+            )
+
+        _mc_warnings = []
+        if _mc_rain < _rf_min or _mc_rain > _rf_max:
+            _mc_warnings.append(
+                f"\U0001f7e1 Rainfall {_mc_rain:,.1f} mm/year is outside the "
+                f"historical dataset range ({_rf_min:,.0f}\u2013{_rf_max:,.0f} mm/year). "
+                "The model will still produce a prediction but results may be less reliable."
+            )
+        if _mc_temp < _tmp_min or _mc_temp > _tmp_max:
+            _mc_warnings.append(
+                f"\U0001f7e1 Temperature {_mc_temp:.1f}\u00b0C is outside the "
+                f"historical dataset range ({_tmp_min:.1f}\u2013{_tmp_max:.1f}\u00b0C)."
+            )
+        if _mc_pest < _ps_min or _mc_pest > _ps_max:
+            _mc_warnings.append(
+                f"\U0001f7e1 Pesticides {_mc_pest:,.1f} tonnes is outside the "
+                f"historical dataset range ({_ps_min:,.0f}\u2013{_ps_max:,.0f} tonnes)."
+            )
+        for _w in _mc_warnings:
+            st.warning(_w)
+
+    # ----------------------------------------------------------------
+    # STEP 2  Crop selection
+    # ----------------------------------------------------------------
+
+    st.write("")
+    with st.container(border=True):
+        st.markdown(
+            '<div class="section-heading">\U0001f331 Select Crops to Compare</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="section-subtext">Choose between 2 and 5 crops. '
+            "All crops will be evaluated under the conditions entered above.</div>",
+            unsafe_allow_html=True,
+        )
+
+        _mc_selected = st.multiselect(
+            "Select crops (2 to 5)",
+            options=crop_options,
+            default=crop_options[:2] if len(crop_options) >= 2 else crop_options,
+            max_selections=5,
+            key="mc_crops",
+            label_visibility="collapsed",
+        )
+
+        if len(_mc_selected) < 2:
+            st.info("\u2139\ufe0f Please select at least 2 crops to compare.")
+        elif len(set(_mc_selected)) != len(_mc_selected):
+            st.error("\u274c Duplicate crops detected. Each crop may only appear once.")
+            _mc_selected = list(dict.fromkeys(_mc_selected))
+
+    # ----------------------------------------------------------------
+    # STEP 3  Compare button
+    # ----------------------------------------------------------------
+
+    st.write("")
+    _mc_compare_btn = st.button(
+        "\U0001f33e Compare Crops",
+        type="primary",
+        use_container_width=True,
+        key="mc_compare_btn",
+        disabled=(len(_mc_selected) < 2),
+    )
+
+    # ----------------------------------------------------------------
+    # STEP 4  Run predictions and store in session state
+    # ----------------------------------------------------------------
+
+    _mc_ss = "mc_results"
+
+    if _mc_compare_btn and len(_mc_selected) >= 2:
+
+        _mc_results = []
+        _mc_errors  = []
+
+        with st.spinner("Running predictions for all selected crops\u2026"):
+            for _crop_name in _mc_selected:
+                try:
+                    _input_df = pd.DataFrame({
+                        "Area":                          [_mc_area],
+                        "Item":                          [_crop_name],
+                        "Year":                          [_mc_year],
+                        "average_rain_fall_mm_per_year": [_mc_rain],
+                        "pesticides_tonnes":             [_mc_pest],
+                        "avg_temp":                      [_mc_temp],
+                    })
+                    _pred = model.predict(_input_df)
+                    _yld  = float(_pred[0])
+                    if not np.isfinite(_yld):
+                        raise ValueError("Model returned a non-finite value.")
+                    _mc_results.append({
+                        "crop":     _crop_name,
+                        "yield":    _yld,
+                        "area":     _mc_area,
+                        "year":     _mc_year,
+                        "rainfall": _mc_rain,
+                        "temp":     _mc_temp,
+                        "pest":     _mc_pest,
+                    })
+                except Exception as _e:
+                    _mc_errors.append(f"{_crop_name}: {_e}")
+
+        if _mc_errors:
+            st.error("Prediction failed for: " + "; ".join(_mc_errors))
+
+        if _mc_results:
+            _mc_results.sort(key=lambda r: r["yield"], reverse=True)
+            for _rank, _r in enumerate(_mc_results, 1):
+                _r["rank"] = _rank
+            st.session_state[_mc_ss] = _mc_results
+            st.success(f"\u2705 Predictions complete for {len(_mc_results)} crops.")
+
+    # ----------------------------------------------------------------
+    # STEP 5  Display results
+    # ----------------------------------------------------------------
+
+    if _mc_ss in st.session_state:
+        _res = st.session_state[_mc_ss]
+
+        _best_yield  = _res[0]["yield"]
+        _worst_yield = _res[-1]["yield"]
+        _best_crop   = _res[0]["crop"]
+        _worst_crop  = _res[-1]["crop"]
+
+        # KPI strip
+        st.write("")
+        st.markdown(
+            '<div class="section-heading">\U0001f4ca Comparison Results</div>',
+            unsafe_allow_html=True,
+        )
+
+        _kpi_cols = st.columns(min(len(_res), 4))
+        for _ci, _r in enumerate(_res[:4]):
+            _is_best   = _r["rank"] == 1
+            _accent    = "#10B981" if _is_best else "#6B7280"
+            _sub_label = "\U0001f3c6 Highest Predicted" if _is_best else f"Rank #{_r['rank']}"
+            with _kpi_cols[_ci]:
+                render_kpi_card(
+                    _r["crop"],
+                    f"{_r['yield']:,.2f}",
+                    f"hg/ha \u00b7 {_sub_label}",
+                    "\U0001f33e" if _is_best else "\U0001f33b",
+                    _accent,
+                )
+
+        if len(_res) == 5:
+            _fifth_col, _ = st.columns([1, 3])
+            with _fifth_col:
+                render_kpi_card(
+                    _res[4]["crop"],
+                    f"{_res[4]['yield']:,.2f}",
+                    "hg/ha \u00b7 Rank #5",
+                    "\U0001f33b",
+                    "#6B7280",
+                )
+
+        # Bar chart
+        st.write("")
+        with st.container(border=True):
+            st.markdown(
+                '<div class="section-heading">\U0001f4c8 Predicted Yield Chart (hg/ha)</div>',
+                unsafe_allow_html=True,
+            )
+
+            _chart_df = pd.DataFrame({
+                "Crop":           [r["crop"]  for r in _res],
+                "Yield (hg/ha)":  [r["yield"] for r in _res],
+                "Rank":           [r["rank"]  for r in _res],
+                "Label":          [
+                    "\U0001f3c6 Highest" if r["rank"] == 1 else "Other"
+                    for r in _res
+                ],
+            })
+            _crop_sort_order = _chart_df["Crop"].tolist()
+
+            _mc_bars = (
+                alt.Chart(_chart_df)
+                .mark_bar(cornerRadiusTopLeft=7, cornerRadiusTopRight=7, size=48)
+                .encode(
+                    x=alt.X(
+                        "Crop:N",
+                        sort=_crop_sort_order,
+                        title=None,
+                        axis=alt.Axis(
+                            labelColor="#1F2937",
+                            labelFontSize=12,
+                            labelFontWeight="bold",
+                            labelAngle=-10,
+                        ),
+                    ),
+                    y=alt.Y(
+                        "Yield (hg/ha):Q",
+                        title="Predicted Yield (hg/ha)",
+                        scale=alt.Scale(domain=[0, _best_yield * 1.2]),
+                        axis=alt.Axis(
+                            format=",.0f",
+                            labelColor="#6B7280",
+                            titleColor="#1F2937",
+                            gridColor="#EEF2EC",
+                        ),
+                    ),
+                    color=alt.Color(
+                        "Label:N",
+                        scale=alt.Scale(
+                            domain=["\U0001f3c6 Highest", "Other"],
+                            range=["#14532D", "#6EE7B7"],
+                        ),
+                        legend=alt.Legend(title=None, orient="top"),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("Crop:N",          title="Crop"),
+                        alt.Tooltip("Yield (hg/ha):Q", title="Predicted Yield (hg/ha)", format=",.2f"),
+                        alt.Tooltip("Rank:Q",          title="Rank"),
+                    ],
+                )
+            )
+            _mc_labels = (
+                alt.Chart(_chart_df)
+                .mark_text(dy=-12, fontSize=12, fontWeight="bold", color="#1F2937")
+                .encode(
+                    x=alt.X("Crop:N", sort=_crop_sort_order),
+                    y=alt.Y("Yield (hg/ha):Q"),
+                    text=alt.Text("Yield (hg/ha):Q", format=",.2f"),
+                )
+            )
+            st.altair_chart(
+                (_mc_bars + _mc_labels)
+                .properties(height=350)
+                .configure_view(strokeWidth=0),
+                use_container_width=True,
+            )
+
+        # Summary
+        st.write("")
+        with st.container(border=True):
+            st.markdown(
+                '<div class="section-heading">\U0001f4dd Understanding the Comparison</div>',
+                unsafe_allow_html=True,
+            )
+
+            _diff    = _best_yield - _worst_yield
+            if _worst_yield > 0:
+                _pct_diff = (_diff / _worst_yield) * 100.0
+                _pct_str  = f"{_pct_diff:.1f}%"
+            elif _worst_yield == 0:
+                _pct_str  = "N/A (lowest prediction is zero)"
+            else:
+                _pct_str  = "N/A (lowest prediction is negative)"
+
+            _summary_items = [
+                f"Highest predicted yield: {_best_crop} \u2014 {_best_yield:,.2f} hg/ha",
+                f"Lowest predicted yield:  {_worst_crop} \u2014 {_worst_yield:,.2f} hg/ha",
+                f"Absolute yield difference: {_diff:,.2f} hg/ha",
+                f"Percentage difference (highest vs lowest): {_pct_str}",
+            ]
+            render_insight_list_card(
+                f"Among the {len(_res)} selected crops under the entered conditions:",
+                _summary_items,
+                bullet_icon="\u2022",
+            )
+
+            st.markdown(
+                (
+                    '<div class="agri-callout">'
+                    "\U0001f4cc "
+                    f"Among the selected crops, <strong>{html.escape(_best_crop)}</strong> "
+                    f"has the highest predicted yield ({_best_yield:,.2f} hg/ha) under the "
+                    "entered conditions. These are model predictions only. "
+                    "A higher predicted yield does not necessarily mean this crop is more "
+                    "profitable or more suitable for cultivation in a specific location. "
+                    "Local conditions, market prices and farming practices also matter."
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
+            )
+
+        # Per-crop expandable details
+        st.write("")
+        st.markdown(
+            '<div class="section-heading">\U0001f50d Individual Crop Prediction Details</div>',
+            unsafe_allow_html=True,
+        )
+        for _r in _res:
+            with st.expander(
+                f"Rank #{_r['rank']}  \u00b7  {_r['crop']}  \u00b7  "
+                f"{_r['yield']:,.2f} hg/ha"
+            ):
+                _detail_df = pd.DataFrame({
+                    "Parameter": [
+                        "Crop",
+                        "Country / Area",
+                        "Year",
+                        "Rainfall",
+                        "Temperature",
+                        "Pesticides",
+                        "Predicted Yield",
+                        "Comparison Rank",
+                    ],
+                    "Value": [
+                        _r["crop"],
+                        _r["area"],
+                        str(_r["year"]),
+                        f"{_r['rainfall']:,.2f} mm/year",
+                        f"{_r['temp']:.2f} \u00b0C",
+                        f"{_r['pest']:,.2f} tonnes",
+                        f"{_r['yield']:,.2f} hg/ha",
+                        f"#{_r['rank']} of {len(_res)}",
+                    ],
+                })
+                st.dataframe(_detail_df, use_container_width=True, hide_index=True)
+
+        # CSV download
+        st.write("")
+        with st.container(border=True):
+            st.markdown(
+                '<div class="section-heading">\U0001f4be Download Comparison Results</div>',
+                unsafe_allow_html=True,
+            )
+            _csv_df = pd.DataFrame([{
+                "Crop":                    r["crop"],
+                "Area":                    r["area"],
+                "Year":                    r["year"],
+                "Rainfall (mm/year)":      r["rainfall"],
+                "Temperature (C)":         r["temp"],
+                "Pesticides (tonnes)":     r["pest"],
+                "Predicted Yield (hg/ha)": r["yield"],
+                "Comparison Rank":         r["rank"],
+            } for r in _res])
+
+            st.dataframe(_csv_df, use_container_width=True, hide_index=True)
+
+            _csv_bytes = _csv_df.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="\U0001f4be Download as CSV",
+                data=_csv_bytes,
+                file_name=(
+                    "multi_crop_comparison_"
+                    + _res[0]["area"].replace(" ", "_")
+                    + "_"
+                    + str(_res[0]["year"])
+                    + ".csv"
+                ),
+                mime="text/csv",
+                type="secondary",
+                use_container_width=True,
+                key="mc_csv_download",
+            )
+
+        st.caption(
+            "\u2139\ufe0f All predictions use the existing trained ML model with identical "
+            "environmental inputs. Only the crop name changes between records. "
+            "Results are in hg/ha (hectograms per hectare)."
+        )
