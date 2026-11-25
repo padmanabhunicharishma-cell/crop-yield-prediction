@@ -1419,6 +1419,7 @@ inject_custom_css()
 NAV_PAGES = [
     "🏠 Home",
     "🔮 Predict Yield",
+    "🔀 What-if Analysis",
     "📊 Data Analysis",
     "🤖 Model Performance",
     "ℹ️ About"
@@ -3152,6 +3153,598 @@ elif page == "ℹ️ About":
             📂 <strong>Dataset source:</strong> CSV file in the project's <code>data/raw</code> folder.
             Yield values are in <strong>hg/ha</strong> (hectograms per hectare).
             The trained model is stored at <code>models/crop_yield_model.pkl</code>.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# ==========================================================
+# 18. WHAT-IF ANALYSIS PAGE
+# ==========================================================
+
+elif page == "🔀 What-if Analysis":
+
+    render_page_header(
+        "🔀",
+        "What-if Crop Yield Analysis",
+        "Explore how changes in environmental conditions may affect predicted crop yield.",
+        badge="Scenario Explorer",
+    )
+
+    # ----------------------------------------------------------------
+    # STEP 1  Determine whether a baseline prediction already exists.
+    # If yes: pre-fill from session state.
+    # If no : show a compact form so the user can set crop/area/year.
+    # ----------------------------------------------------------------
+
+    _has_baseline = "last_prediction" in st.session_state
+
+    if _has_baseline:
+        _base       = st.session_state["last_prediction"]
+        _crop       = _base["crop"]
+        _area       = _base["area"]
+        _year       = int(_base["year"])
+        _base_rain  = float(_base["rainfall"])
+        _base_temp  = float(_base["temperature"])
+        _base_pest  = float(_base["pesticides"])
+        _base_yield = float(_base["predicted_yield"])
+
+        st.markdown(
+            f"""
+            <div class="agri-callout">
+                📌 <strong>Baseline loaded from your latest prediction:</strong>
+                &nbsp; {html.escape(_crop)} &nbsp;/&nbsp; {html.escape(_area)}
+                &nbsp;/&nbsp; {_year}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    else:
+        st.markdown(
+            """
+            <div class="agri-callout">
+                ℹ️ No previous prediction found.
+                Choose a crop, area and year below to set the baseline for your scenario.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        with st.container(border=True):
+            st.markdown(
+                '<div class="section-heading">🌱 Set Baseline Crop &amp; Location</div>',
+                unsafe_allow_html=True,
+            )
+            _wc1, _wc2, _wc3 = st.columns(3)
+            with _wc1:
+                _crop = st.selectbox("Select Crop", crop_options, key="wi_crop_sel")
+            with _wc2:
+                _area = st.selectbox("Select Area / Country", area_options,
+                                     key="wi_area_sel")
+            with _wc3:
+                _year = int(st.number_input("Year", min_value=1961,
+                                            max_value=2030, value=2025,
+                                            step=1, key="wi_year_sel"))
+
+        # Derive defaults from dataset medians
+        _base_rain  = float(pd.to_numeric(
+            df["average_rain_fall_mm_per_year"], errors="coerce").dropna().median())
+        _base_temp  = float(pd.to_numeric(
+            df["avg_temp"], errors="coerce").dropna().median())
+        _base_pest  = float(pd.to_numeric(
+            df["pesticides_tonnes"], errors="coerce").dropna().median())
+
+        # Predict baseline with those defaults
+        _bi = pd.DataFrame({
+            "Area":                          [_area],
+            "Item":                          [_crop],
+            "Year":                          [_year],
+            "average_rain_fall_mm_per_year": [_base_rain],
+            "pesticides_tonnes":             [_base_pest],
+            "avg_temp":                      [_base_temp],
+        })
+        try:
+            _bv = model.predict(_bi)
+            _base_yield = float(_bv[0])
+            if not np.isfinite(_base_yield):
+                _base_yield = 0.0
+        except Exception:
+            _base_yield = 0.0
+
+    # ----------------------------------------------------------------
+    # STEP 2  Compute slider bounds from the dataset.
+    # ----------------------------------------------------------------
+
+    _wi_crop_df = df[df["Item"] == _crop]
+    _wi_ref     = _wi_crop_df if len(_wi_crop_df) >= 5 else df
+
+    def _wi_bounds(col, floor=0.0, headroom=1.4):
+        s = pd.to_numeric(_wi_ref[col], errors="coerce").dropna()
+        if s.empty:
+            s = pd.to_numeric(df[col], errors="coerce").dropna()
+        return max(floor, float(s.min())), float(s.max()) * headroom
+
+    _rf_min,   _rf_max   = _wi_bounds("average_rain_fall_mm_per_year", 0.0,  1.4)
+    _tmp_min,  _tmp_max  = _wi_bounds("avg_temp",                      -15.0, 1.2)
+    _pest_min, _pest_max = _wi_bounds("pesticides_tonnes",              0.0,  2.0)
+
+    # Clamp baseline inside bounds
+    _init_rain = float(np.clip(_base_rain, _rf_min,   _rf_max))
+    _init_temp = float(np.clip(_base_temp, _tmp_min,  _tmp_max))
+    _init_pest = float(np.clip(_base_pest, _pest_min, _pest_max))
+
+    # ----------------------------------------------------------------
+    # STEP 3  Persist originals in session state so Reset works.
+    # ----------------------------------------------------------------
+
+    _wi_sk = f"wi_orig_{_crop}_{_area}_{_year}"
+    if _wi_sk not in st.session_state:
+        st.session_state[_wi_sk] = {
+            "rain": _init_rain,
+            "temp": _init_temp,
+            "pest": _init_pest,
+        }
+    _wi_orig = st.session_state[_wi_sk]
+
+    # Reset button  (must come before sliders so the values take effect)
+    _rc, _rsp = st.columns([1, 5])
+    with _rc:
+        if st.button(
+            "↺ Reset to Original",
+            type="secondary",
+            use_container_width=True,
+            key="wi_reset_btn",
+        ):
+            st.session_state["wi_rain"] = _wi_orig["rain"]
+            st.session_state["wi_temp"] = _wi_orig["temp"]
+            st.session_state["wi_pest"] = _wi_orig["pest"]
+            st.rerun()
+
+    # ----------------------------------------------------------------
+    # STEP 4  Sliders
+    # ----------------------------------------------------------------
+
+    st.write("")
+    with st.container(border=True):
+        st.markdown(
+            '<div class="section-heading">🎚️ Adjust Environmental Conditions</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="section-subtext">' +
+            "Move the sliders to explore different scenarios. "
+            "The existing trained model recalculates the prediction instantly." +
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        _ws1, _ws2, _ws3 = st.columns(3)
+
+        with _ws1:
+            st.markdown(
+                '<div class="input-group-label">🌧️ Rainfall</div>',
+                unsafe_allow_html=True,
+            )
+            _new_rain = st.slider(
+                "Average Rainfall mm/year",
+                min_value=float(_rf_min),
+                max_value=float(_rf_max),
+                value=float(st.session_state.get("wi_rain", _init_rain)),
+                step=max(1.0, round((_rf_max - _rf_min) / 200, 1)),
+                format="%.1f",
+                key="wi_rain",
+                label_visibility="collapsed",
+                help=(
+                    f"Dataset range for this crop: "
+                    f"{_rf_min:,.0f} to {_rf_max:,.0f} mm/year"
+                ),
+            )
+            st.caption(
+                f"Min {_rf_min:,.0f}  |  "
+                f"Selected: {_new_rain:,.1f} mm/year  |  "
+                f"Max {_rf_max:,.0f}"
+            )
+
+        with _ws2:
+            st.markdown(
+                '<div class="input-group-label">🌡️ Temperature</div>',
+                unsafe_allow_html=True,
+            )
+            _new_temp = st.slider(
+                "Average Temperature C",
+                min_value=float(_tmp_min),
+                max_value=float(_tmp_max),
+                value=float(st.session_state.get("wi_temp", _init_temp)),
+                step=0.5,
+                format="%.1f",
+                key="wi_temp",
+                label_visibility="collapsed",
+                help=(
+                    f"Dataset range for this crop: "
+                    f"{_tmp_min:.1f} to {_tmp_max:.1f} C"
+                ),
+            )
+            st.caption(
+                f"Min {_tmp_min:.1f}  |  "
+                f"Selected: {_new_temp:.1f} C  |  "
+                f"Max {_tmp_max:.1f}"
+            )
+
+        with _ws3:
+            st.markdown(
+                '<div class="input-group-label">🧪 Pesticides</div>',
+                unsafe_allow_html=True,
+            )
+            _new_pest = st.slider(
+                "Pesticides Usage tonnes",
+                min_value=float(_pest_min),
+                max_value=float(_pest_max),
+                value=float(st.session_state.get("wi_pest", _init_pest)),
+                step=max(1.0, round((_pest_max - _pest_min) / 200, 1)),
+                format="%.1f",
+                key="wi_pest",
+                label_visibility="collapsed",
+                help=(
+                    f"Dataset range for this crop: "
+                    f"{_pest_min:,.0f} to {_pest_max:,.0f} tonnes"
+                ),
+            )
+            st.caption(
+                f"Min {_pest_min:,.0f}  |  "
+                f"Selected: {_new_pest:,.1f} t  |  "
+                f"Max {_pest_max:,.0f}"
+            )
+
+    # ----------------------------------------------------------------
+    # STEP 5  Run the existing model on the modified scenario.
+    #         Uses the loaded `model` object  no retraining.
+    # ----------------------------------------------------------------
+
+    _wi_input = pd.DataFrame({
+        "Area":                          [_area],
+        "Item":                          [_crop],
+        "Year":                          [_year],
+        "average_rain_fall_mm_per_year": [_new_rain],
+        "pesticides_tonnes":             [_new_pest],
+        "avg_temp":                      [_new_temp],
+    })
+
+    try:
+        _wi_pred   = model.predict(_wi_input)
+        _new_yield = float(_wi_pred[0])
+        if not np.isfinite(_new_yield):
+            _new_yield = 0.0
+    except Exception as _wi_err:
+        st.error("Scenario prediction failed.")
+        st.exception(_wi_err)
+        st.stop()
+
+    _wi_diff  = _new_yield - _base_yield
+    _wi_pct   = (_wi_diff / _base_yield * 100) if _base_yield != 0 else 0.0
+    _wi_sign  = "+" if _wi_diff >= 0 else ""
+
+    # ----------------------------------------------------------------
+    # STEP 6  KPI comparison strip
+    # ----------------------------------------------------------------
+
+    st.write("")
+    st.markdown(
+        '<div class="section-heading">📊 Prediction Comparison</div>',
+        unsafe_allow_html=True,
+    )
+
+    _wi_thresh       = get_crop_thresholds(_crop)
+    _wi_base_st, _   = classify_yield(_base_yield, _wi_thresh)
+    _wi_new_st,  _   = classify_yield(_new_yield,  _wi_thresh)
+    _wi_base_sty     = get_status_style(_wi_base_st)
+    _wi_new_sty      = get_status_style(_wi_new_st)
+    _wi_diff_accent  = "#10B981" if _wi_diff >= 0 else "#DC2626"
+    _wi_arrow        = "▲" if _wi_diff > 0 else ("▼" if _wi_diff < 0 else "→")
+
+    _wk1, _wk2, _wk3, _wk4 = st.columns(4)
+
+    with _wk1:
+        render_kpi_card(
+            "Original Yield",
+            f"{_base_yield:,.2f}",
+            "hg/ha  (baseline)",
+            "📌",
+            "#6B7280",
+        )
+
+    with _wk2:
+        st.markdown(
+            f"""
+            <div class="kpi-card"
+                 style="border-top-color:{_wi_new_sty['accent']};
+                        background:{_wi_new_sty['bg']};
+                        border-color:{_wi_new_sty['border']};">
+              <div class="kpi-label" style="color:{_wi_new_sty['text']};">
+                🎯 Scenario Yield
+              </div>
+              <div class="kpi-value" style="color:{_wi_new_sty['text']};">
+                {_new_yield:,.2f}
+              </div>
+              <div class="kpi-sub" style="color:{_wi_new_sty['text']};">hg/ha</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with _wk3:
+        render_kpi_card(
+            f"{_wi_arrow} Difference",
+            f"{_wi_sign}{_wi_diff:,.2f}",
+            "hg/ha",
+            "",
+            _wi_diff_accent,
+        )
+
+    with _wk4:
+        render_kpi_card(
+            "% Change",
+            f"{_wi_sign}{_wi_pct:.1f}%",
+            "relative to original",
+            "📈" if _wi_diff >= 0 else "📉",
+            _wi_diff_accent,
+        )
+
+    # ----------------------------------------------------------------
+    # STEP 7  Side-by-side input comparison table
+    # ----------------------------------------------------------------
+
+    st.write("")
+    with st.container(border=True):
+        st.markdown(
+            '<div class="section-heading">🔢 Original vs Modified Conditions</div>',
+            unsafe_allow_html=True,
+        )
+        _wi_comp = pd.DataFrame({
+            "Condition": [
+                "Rainfall (mm/year)",
+                "Temperature (C)",
+                "Pesticides (tonnes)",
+            ],
+            "Original": [
+                f"{_init_rain:,.2f}",
+                f"{_init_temp:.2f}",
+                f"{_init_pest:,.2f}",
+            ],
+            "Scenario": [
+                f"{_new_rain:,.2f}",
+                f"{_new_temp:.2f}",
+                f"{_new_pest:,.2f}",
+            ],
+            "Change": [
+                f"{_new_rain - _init_rain:+.2f}",
+                f"{_new_temp - _init_temp:+.2f}",
+                f"{_new_pest - _init_pest:+.2f}",
+            ],
+        })
+        st.dataframe(_wi_comp, use_container_width=True, hide_index=True)
+
+    # ----------------------------------------------------------------
+    # STEP 8  Bar chart
+    # ----------------------------------------------------------------
+
+    st.write("")
+    with st.container(border=True):
+        st.markdown(
+            '<div class="section-heading">📈 Yield Comparison Chart</div>',
+            unsafe_allow_html=True,
+        )
+
+        _wi_chart = pd.DataFrame({
+            "Scenario":      ["Original Prediction", "Scenario Prediction"],
+            "Yield (hg/ha)": [_base_yield, _new_yield],
+            "Type":          ["Original", "Scenario"],
+        })
+
+        _wi_ymax   = max(_base_yield, _new_yield, 1.0) * 1.22
+        _wi_colors = (
+            ["#6EE7B7", "#14532D"]
+            if _wi_diff >= 0
+            else ["#6EE7B7", "#F87171"]
+        )
+
+        _wi_bars = (
+            alt.Chart(_wi_chart)
+            .mark_bar(cornerRadiusTopLeft=7, cornerRadiusTopRight=7, size=56)
+            .encode(
+                x=alt.X(
+                    "Scenario:N",
+                    title=None,
+                    axis=alt.Axis(
+                        labelColor="#1F2937",
+                        labelFontSize=13,
+                        labelFontWeight="bold",
+                    ),
+                ),
+                y=alt.Y(
+                    "Yield (hg/ha):Q",
+                    title="Yield (hg/ha)",
+                    scale=alt.Scale(domain=[0, _wi_ymax]),
+                    axis=alt.Axis(
+                        format=",.0f",
+                        labelColor="#6B7280",
+                        titleColor="#1F2937",
+                        gridColor="#EEF2EC",
+                    ),
+                ),
+                color=alt.Color(
+                    "Type:N",
+                    scale=alt.Scale(
+                        domain=["Original", "Scenario"],
+                        range=_wi_colors,
+                    ),
+                    legend=None,
+                ),
+                tooltip=[
+                    alt.Tooltip("Scenario:N", title="Scenario"),
+                    alt.Tooltip(
+                        "Yield (hg/ha):Q",
+                        title="Yield (hg/ha)",
+                        format=",.2f",
+                    ),
+                ],
+            )
+        )
+
+        _wi_lbl = (
+            alt.Chart(_wi_chart)
+            .mark_text(dy=-12, fontSize=14, fontWeight="bold", color="#1F2937")
+            .encode(
+                x=alt.X("Scenario:N"),
+                y=alt.Y("Yield (hg/ha):Q"),
+                text=alt.Text("Yield (hg/ha):Q", format=",.2f"),
+            )
+        )
+
+        st.altair_chart(
+            (_wi_bars + _wi_lbl)
+            .properties(height=330)
+            .configure_view(strokeWidth=0),
+            use_container_width=True,
+        )
+
+    # ----------------------------------------------------------------
+    # STEP 9  Yield category comparison cards
+    # ----------------------------------------------------------------
+
+    st.write("")
+    _wcc1, _wcc2 = st.columns(2)
+
+    with _wcc1:
+        st.markdown(
+            f"""
+            <div style="background:{_wi_base_sty['bg']};
+                        border:1.5px solid {_wi_base_sty['border']};
+                        border-radius:14px;padding:18px 20px;">
+              <div style="font-size:.8rem;font-weight:600;
+                          color:{_wi_base_sty['text']};margin-bottom:4px;">
+                📌 Original Yield Category
+              </div>
+              <div style="font-size:1.5rem;font-weight:800;
+                          color:{_wi_base_sty['text']};">
+                {html.escape(_wi_base_st)}
+              </div>
+              <div style="font-size:.88rem;color:{_wi_base_sty['text']};margin-top:4px;">
+                {_base_yield:,.2f} hg/ha
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with _wcc2:
+        st.markdown(
+            f"""
+            <div style="background:{_wi_new_sty['bg']};
+                        border:1.5px solid {_wi_new_sty['border']};
+                        border-radius:14px;padding:18px 20px;">
+              <div style="font-size:.8rem;font-weight:600;
+                          color:{_wi_new_sty['text']};margin-bottom:4px;">
+                🎯 Scenario Yield Category
+              </div>
+              <div style="font-size:1.5rem;font-weight:800;
+                          color:{_wi_new_sty['text']};">
+                {html.escape(_wi_new_st)}
+              </div>
+              <div style="font-size:.88rem;color:{_wi_new_sty['text']};margin-top:4px;">
+                {_new_yield:,.2f} hg/ha
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # ----------------------------------------------------------------
+    # STEP 10  Smart explanation  generated from actual results
+    # ----------------------------------------------------------------
+
+    st.write("")
+
+    _wi_rain_d = abs(_new_rain - _init_rain)
+    _wi_temp_d = abs(_new_temp - _init_temp)
+    _wi_pest_d = abs(_new_pest - _init_pest)
+    _wi_changed = (_wi_rain_d + _wi_temp_d + _wi_pest_d) > 0.05
+
+    if not _wi_changed:
+        _wi_expl = (
+            "The slider values match the original conditions. "
+            "Move a slider to explore a different scenario."
+        )
+    else:
+        _wi_parts = []
+        if _wi_rain_d > 0.5:
+            _d = "increased" if _new_rain > _init_rain else "decreased"
+            _wi_parts.append(f"rainfall {_d} to {_new_rain:,.1f} mm/year")
+        if _wi_temp_d > 0.1:
+            _d = "increased" if _new_temp > _init_temp else "decreased"
+            _wi_parts.append(f"temperature {_d} to {_new_temp:.1f} C")
+        if _wi_pest_d > 0.5:
+            _d = "increased" if _new_pest > _init_pest else "decreased"
+            _wi_parts.append(f"pesticide usage {_d} to {_new_pest:,.1f} tonnes")
+
+        if not _wi_parts:
+            _wi_parts = ["one or more conditions changed"]
+
+        if len(_wi_parts) > 1:
+            _wi_change_str = ", ".join(_wi_parts[:-1]) + " and " + _wi_parts[-1]
+        else:
+            _wi_change_str = _wi_parts[0]
+
+        if abs(_wi_diff) < 1.0:
+            _wi_outcome = (
+                f"the predicted yield remained almost the same "
+                f"({_new_yield:,.2f} hg/ha, difference less than 1 hg/ha)."
+            )
+        elif _wi_diff > 0:
+            _wi_outcome = (
+                f"the model predicts a higher yield of {_new_yield:,.2f} hg/ha "
+                f"(+{_wi_diff:,.2f} hg/ha, {_wi_pct:.1f}% increase)."
+            )
+        else:
+            _wi_outcome = (
+                f"the model predicts a lower yield of {_new_yield:,.2f} hg/ha "
+                f"({_wi_diff:,.2f} hg/ha, {_wi_pct:.1f}% decrease)."
+            )
+
+        _wi_expl = f"After {_wi_change_str}, {_wi_outcome}"
+
+    st.markdown(
+        f"""
+        <div class="agri-card" style="border-left:4px solid #10B981;">
+          <div style="font-size:.8rem;font-weight:700;color:#14532D;
+                      text-transform:uppercase;letter-spacing:.05em;
+                      margin-bottom:8px;">
+            💬 Scenario Explanation
+          </div>
+          <div style="font-size:.97rem;color:#1F2937;line-height:1.6;">
+            {html.escape(_wi_expl)}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ----------------------------------------------------------------
+    # STEP 11  Disclaimer
+    # ----------------------------------------------------------------
+
+    st.markdown(
+        """
+        <div class="agri-callout">
+            ℹ️ <strong>Important:</strong>
+            This page shows model-based scenario results.
+            The numbers reflect how the trained ML model responds to the
+            adjusted input values. They are not proof that changing rainfall,
+            temperature or pesticide usage will directly cause a particular
+            yield change in reality.
+            Actual crop yield depends on many factors not captured in this
+            model, including soil quality, seed variety, irrigation, sowing
+            time and farming practices.
         </div>
         """,
         unsafe_allow_html=True,
