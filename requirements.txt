@@ -3,3 +3,7 @@ pandas
 numpy
 scikit-learn
 joblib
+altair
+fpdf2
+tensorflow
+Pillow

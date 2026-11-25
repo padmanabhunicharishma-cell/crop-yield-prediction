@@ -1422,7 +1422,9 @@ NAV_PAGES = [
     "🔀 What-if Analysis",
     "📊 Data Analysis",
     "🤖 Model Performance",
-    "ℹ️ About"
+    "ℹ️ About",
+    "💰 Profit Calculator",
+    "🌿 Crop Health Monitor",
 ]
 
 if "nav_page" not in st.session_state:
@@ -3749,3 +3751,1156 @@ elif page == "🔀 What-if Analysis":
         """,
         unsafe_allow_html=True,
     )
+
+
+# ==========================================================
+# 19. ESTIMATED PROFIT CALCULATOR PAGE
+# ==========================================================
+
+elif page == "💰 Profit Calculator":
+
+    render_page_header(
+        "💰",
+        "Estimated Profit Calculator",
+        "Convert your predicted crop yield into an estimated farming revenue, expenses and profit.",
+        badge="Financial Estimates",
+    )
+
+    # ----------------------------------------------------------------
+    # UNIT CONVERSION NOTE
+    # The existing model predicts yield in hg/ha (hectograms per hectare).
+    # 1 hg = 0.1 kg  =>  1 hg/ha = 0.1 kg/ha
+    # Total production (kg) = predicted_yield (hg/ha) * land_area (ha) * 0.1
+    # We surface this as a first-class choice so the user always knows
+    # exactly what units are flowing through the calculation.
+    # ----------------------------------------------------------------
+
+    _HG_TO_KG = 0.1          # 1 hg = 0.1 kg
+    _HG_TO_TONNE = 0.0001    # 1 hg = 0.0001 tonne  (100 hg = 1 kg, 1000 kg = 1 tonne)
+
+    # ----------------------------------------------------------------
+    # STEP 1  Fetch crop & yield from previous prediction if available
+    # ----------------------------------------------------------------
+
+    _pc_has_pred = "last_prediction" in st.session_state
+
+    if _pc_has_pred:
+        _pc_pred   = st.session_state["last_prediction"]
+        _pc_crop   = _pc_pred["crop"]
+        _pc_area   = _pc_pred["area"]
+        _pc_yield  = float(_pc_pred["predicted_yield"])   # hg/ha
+
+        st.markdown(
+            f"""
+            <div class="agri-callout">
+                📌 <strong>Prediction loaded:</strong>
+                &nbsp; {html.escape(_pc_crop)} &nbsp;/&nbsp; {html.escape(_pc_area)}
+                &nbsp;&mdash;&nbsp; Predicted yield: <strong>{_pc_yield:,.2f} hg/ha</strong>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            """
+            <div class="agri-callout">
+                ℹ️ No prediction found. Go to Predict Yield first to load crop data
+                automatically, or enter the values manually below.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        _pc_crop  = "Unknown crop"
+        _pc_area  = "Unknown area"
+        _pc_yield = 0.0
+
+    # ----------------------------------------------------------------
+    # STEP 2  Production inputs
+    # ----------------------------------------------------------------
+
+    st.write("")
+    with st.container(border=True):
+        st.markdown(
+            '<div class="section-heading">🌾 Production Details</div>',
+            unsafe_allow_html=True,
+        )
+
+        _pi1, _pi2, _pi3 = st.columns(3)
+
+        with _pi1:
+            _pc_land = st.number_input(
+                "Cultivated Land Area (hectares)",
+                min_value=0.01,
+                max_value=100000.0,
+                value=1.0,
+                step=0.5,
+                format="%.2f",
+                key="pc_land",
+                help="Enter the total cultivated area in hectares (1 hectare = 10,000 m²).",
+            )
+
+        with _pi2:
+            _pc_yield_input = st.number_input(
+                "Predicted Yield (hg/ha)",
+                min_value=0.0,
+                value=float(max(_pc_yield, 0.0)),
+                step=100.0,
+                format="%.2f",
+                key="pc_yield_val",
+                help="Loaded from latest prediction. You can edit this manually.",
+            )
+
+        with _pi3:
+            _pc_harvest_pct = st.slider(
+                "Expected Harvest % of Predicted",
+                min_value=10,
+                max_value=100,
+                value=80,
+                step=5,
+                key="pc_harvest_pct",
+                help=(
+                    "Adjust for crop losses due to weather, pests or other factors. "
+                    "100% means the full predicted yield is harvested."
+                ),
+            )
+            st.caption(
+                f"Using {_pc_harvest_pct}% of predicted yield "
+                f"= {_pc_yield_input * _pc_harvest_pct / 100:,.2f} hg/ha effective yield."
+            )
+
+    # ----------------------------------------------------------------
+    # STEP 3  Selling price inputs
+    # ----------------------------------------------------------------
+
+    _pc_eff_yield_hgha = _pc_yield_input * (_pc_harvest_pct / 100.0)
+
+    # Total production in kg  (hg/ha * ha * 0.1 kg/hg)
+    _pc_prod_kg = _pc_eff_yield_hgha * _pc_land * _HG_TO_KG
+
+    st.write("")
+    with st.container(border=True):
+        st.markdown(
+            '<div class="section-heading">💵 Selling Price</div>',
+            unsafe_allow_html=True,
+        )
+
+        _sp1, _sp2, _sp3 = st.columns(3)
+
+        with _sp1:
+            _pc_currency = st.selectbox(
+                "Currency",
+                ["USD ($)", "EUR (€)", "GBP (£)", "INR (₹)", "Other"],
+                key="pc_currency",
+            )
+            _pc_curr_sym = _pc_currency.split(" ")[0] if _pc_currency != "Other" else ""
+
+        with _sp2:
+            _pc_price_unit = st.selectbox(
+                "Price Unit",
+                ["per kg", "per tonne (1,000 kg)", "per quintal (100 kg)"],
+                key="pc_price_unit",
+                help="Choose the unit that matches your local market price.",
+            )
+
+        with _sp3:
+            _pc_price = st.number_input(
+                f"Selling Price ({_pc_price_unit})",
+                min_value=0.0,
+                value=0.50,
+                step=0.01,
+                format="%.4f",
+                key="pc_price_val",
+            )
+
+        # Convert selling price to per-kg regardless of chosen unit
+        if "per tonne" in _pc_price_unit:
+            _pc_price_per_kg = _pc_price / 1000.0
+        elif "per quintal" in _pc_price_unit:
+            _pc_price_per_kg = _pc_price / 100.0
+        else:                            # per kg
+            _pc_price_per_kg = _pc_price
+
+        st.caption(
+            f"Effective price per kg: "
+            f"{_pc_curr_sym} {_pc_price_per_kg:.4f}  |  "
+            f"Total production: {_pc_prod_kg:,.2f} kg  "
+            f"({_pc_prod_kg / 1000:,.4f} tonnes)"
+        )
+
+    # ----------------------------------------------------------------
+    # STEP 4  Expense inputs
+    # ----------------------------------------------------------------
+
+    st.write("")
+    with st.container(border=True):
+        st.markdown(
+            '<div class="section-heading">📋 Farming Expenses</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="section-subtext">Enter total expenses for the cultivated area. Leave at 0 if not applicable.</div>',
+            unsafe_allow_html=True,
+        )
+
+        _ea, _eb = st.columns(2)
+        _ec, _ed = st.columns(2)
+        _ee, _ef = st.columns(2)
+        _eg, _eh = st.columns(2)
+
+        with _ea:
+            _pc_seed = st.number_input(
+                f"Seed Expenses ({_pc_curr_sym})",
+                min_value=0.0, value=0.0, step=1.0,
+                format="%.2f", key="pc_seed",
+            )
+        with _eb:
+            _pc_fert = st.number_input(
+                f"Fertilizer Expenses ({_pc_curr_sym})",
+                min_value=0.0, value=0.0, step=1.0,
+                format="%.2f", key="pc_fert",
+            )
+        with _ec:
+            _pc_pest_exp = st.number_input(
+                f"Pesticide Expenses ({_pc_curr_sym})",
+                min_value=0.0, value=0.0, step=1.0,
+                format="%.2f", key="pc_pest_exp",
+            )
+        with _ed:
+            _pc_labour = st.number_input(
+                f"Labour Expenses ({_pc_curr_sym})",
+                min_value=0.0, value=0.0, step=1.0,
+                format="%.2f", key="pc_labour",
+            )
+        with _ee:
+            _pc_irrig = st.number_input(
+                f"Irrigation Expenses ({_pc_curr_sym})",
+                min_value=0.0, value=0.0, step=1.0,
+                format="%.2f", key="pc_irrig",
+            )
+        with _ef:
+            _pc_other = st.number_input(
+                f"Other Expenses ({_pc_curr_sym})",
+                min_value=0.0, value=0.0, step=1.0,
+                format="%.2f", key="pc_other",
+            )
+
+    # ----------------------------------------------------------------
+    # STEP 5  Core calculations
+    # ----------------------------------------------------------------
+
+    _pc_total_expenses = (
+        _pc_seed + _pc_fert + _pc_pest_exp +
+        _pc_labour + _pc_irrig + _pc_other
+    )
+    _pc_revenue = _pc_prod_kg * _pc_price_per_kg
+    _pc_profit  = _pc_revenue - _pc_total_expenses
+    _pc_margin  = (
+        (_pc_profit / _pc_revenue * 100) if _pc_revenue > 0 else 0.0
+    )
+    _pc_is_profit = _pc_profit >= 0
+
+    # ----------------------------------------------------------------
+    # STEP 6  Results KPI strip
+    # ----------------------------------------------------------------
+
+    st.write("")
+    st.markdown(
+        '<div class="section-heading">📊 Financial Summary</div>',
+        unsafe_allow_html=True,
+    )
+
+    _pk1, _pk2, _pk3, _pk4, _pk5 = st.columns(5)
+
+    with _pk1:
+        render_kpi_card(
+            "Total Production",
+            f"{_pc_prod_kg:,.1f} kg",
+            f"{_pc_prod_kg / 1000:,.4f} tonnes",
+            "🌾",
+            "#10B981",
+        )
+
+    with _pk2:
+        render_kpi_card(
+            "Estimated Revenue",
+            f"{_pc_curr_sym} {_pc_revenue:,.2f}",
+            f"At {_pc_curr_sym} {_pc_price_per_kg:.4f} / kg",
+            "💰",
+            "#14532D",
+        )
+
+    with _pk3:
+        render_kpi_card(
+            "Total Expenses",
+            f"{_pc_curr_sym} {_pc_total_expenses:,.2f}",
+            "All farming costs combined",
+            "📋",
+            "#84CC16",
+        )
+
+    with _pk4:
+        _profit_accent = "#10B981" if _pc_is_profit else "#DC2626"
+        _profit_icon   = "📈" if _pc_is_profit else "📉"
+        _profit_label  = "Estimated Profit" if _pc_is_profit else "Estimated Loss"
+        render_kpi_card(
+            _profit_label,
+            f"{_pc_curr_sym} {abs(_pc_profit):,.2f}",
+            "Revenue minus expenses",
+            _profit_icon,
+            _profit_accent,
+        )
+
+    with _pk5:
+        _margin_accent = "#10B981" if _pc_margin >= 0 else "#DC2626"
+        render_kpi_card(
+            "Profit Margin",
+            f"{_pc_margin:.1f}%",
+            "Of estimated revenue",
+            "💯",
+            _margin_accent,
+        )
+
+    # ----------------------------------------------------------------
+    # STEP 7  Colour-coded result card
+    # ----------------------------------------------------------------
+
+    st.write("")
+    if _pc_revenue == 0:
+        st.info(
+            "ℹ️ Enter a selling price and land area to see revenue and profit estimates."
+        )
+    elif _pc_is_profit:
+        st.success(
+            f"✅ Based on these estimates, the crop yields an estimated profit of "
+            f"**{_pc_curr_sym} {_pc_profit:,.2f}** "
+            f"on a revenue of **{_pc_curr_sym} {_pc_revenue:,.2f}** "
+            f"(profit margin: **{_pc_margin:.1f}%**)."
+        )
+    else:
+        st.warning(
+            f"⚠️ Based on these estimates, the expenses exceed the revenue by "
+            f"**{_pc_curr_sym} {abs(_pc_profit):,.2f}**. "
+            f"Review your costs or adjust the selling price."
+        )
+
+    # ----------------------------------------------------------------
+    # STEP 8  Revenue vs Expenses chart
+    # ----------------------------------------------------------------
+
+    st.write("")
+    _chart_col1, _chart_col2 = st.columns(2)
+
+    with _chart_col1:
+        with st.container(border=True):
+            st.markdown(
+                '<div class="section-heading">📈 Revenue vs Expenses</div>',
+                unsafe_allow_html=True,
+            )
+
+            _rv_df = pd.DataFrame({
+                "Category": ["Estimated Revenue", "Total Expenses",
+                              "Estimated Profit" if _pc_is_profit else "Estimated Loss"],
+                "Amount":   [_pc_revenue, _pc_total_expenses, abs(_pc_profit)],
+                "Type":     ["Revenue", "Expenses",
+                              "Profit" if _pc_is_profit else "Loss"],
+            })
+
+            _rv_colors = {
+                "Revenue":  "#6EE7B7",
+                "Expenses": "#FCD34D",
+                "Profit":   "#14532D",
+                "Loss":     "#F87171",
+            }
+
+            _rv_chart = (
+                alt.Chart(_rv_df)
+                .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6, size=44)
+                .encode(
+                    x=alt.X(
+                        "Category:N",
+                        title=None,
+                        axis=alt.Axis(
+                            labelColor="#1F2937",
+                            labelFontSize=11,
+                            labelAngle=-10,
+                        ),
+                    ),
+                    y=alt.Y(
+                        "Amount:Q",
+                        title=f"Amount ({_pc_curr_sym})",
+                        axis=alt.Axis(
+                            format=",.0f",
+                            labelColor="#6B7280",
+                            titleColor="#1F2937",
+                            gridColor="#EEF2EC",
+                        ),
+                    ),
+                    color=alt.Color(
+                        "Type:N",
+                        scale=alt.Scale(
+                            domain=list(_rv_colors.keys()),
+                            range=list(_rv_colors.values()),
+                        ),
+                        legend=None,
+                    ),
+                    tooltip=[
+                        alt.Tooltip("Category:N", title="Category"),
+                        alt.Tooltip("Amount:Q",   title=f"Amount ({_pc_curr_sym})", format=",.2f"),
+                    ],
+                )
+            )
+            _rv_lbl = (
+                alt.Chart(_rv_df)
+                .mark_text(dy=-10, fontSize=11, fontWeight="bold", color="#1F2937")
+                .encode(
+                    x=alt.X("Category:N"),
+                    y=alt.Y("Amount:Q"),
+                    text=alt.Text("Amount:Q", format=",.2f"),
+                )
+            )
+            st.altair_chart(
+                (_rv_chart + _rv_lbl)
+                .properties(height=300)
+                .configure_view(strokeWidth=0),
+                use_container_width=True,
+            )
+
+    # ----------------------------------------------------------------
+    # STEP 9  Expense breakdown chart
+    # ----------------------------------------------------------------
+
+    with _chart_col2:
+        with st.container(border=True):
+            st.markdown(
+                '<div class="section-heading">🥧 Expense Breakdown</div>',
+                unsafe_allow_html=True,
+            )
+
+            _exp_items = {
+                "Seeds":        _pc_seed,
+                "Fertilizer":   _pc_fert,
+                "Pesticides":   _pc_pest_exp,
+                "Labour":       _pc_labour,
+                "Irrigation":   _pc_irrig,
+                "Other":        _pc_other,
+            }
+            _exp_nonzero = {k: v for k, v in _exp_items.items() if v > 0}
+
+            if not _exp_nonzero:
+                st.info("Enter expenses above to see the breakdown chart.")
+            else:
+                _exp_df = pd.DataFrame({
+                    "Expense":  list(_exp_nonzero.keys()),
+                    "Amount":   list(_exp_nonzero.values()),
+                })
+
+                _exp_pie = (
+                    alt.Chart(_exp_df)
+                    .mark_arc(innerRadius=55, outerRadius=110)
+                    .encode(
+                        theta=alt.Theta("Amount:Q"),
+                        color=alt.Color(
+                            "Expense:N",
+                            scale=alt.Scale(scheme="greens"),
+                            legend=alt.Legend(title=None, orient="bottom"),
+                        ),
+                        tooltip=[
+                            alt.Tooltip("Expense:N", title="Expense"),
+                            alt.Tooltip("Amount:Q",  title=f"Amount ({_pc_curr_sym})", format=",.2f"),
+                        ],
+                    )
+                )
+                st.altair_chart(
+                    _exp_pie
+                    .properties(height=300)
+                    .configure_view(strokeWidth=0),
+                    use_container_width=True,
+                )
+
+    # ----------------------------------------------------------------
+    # STEP 10  What-if Profit Analysis
+    # ----------------------------------------------------------------
+
+    st.write("")
+    with st.container(border=True):
+        st.markdown(
+            '<div class="section-heading">🔀 What-if Profit Analysis</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<div class="section-subtext">' +
+            "Adjust selling price or a key expense to see how the profit changes." +
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        _wf1, _wf2 = st.columns(2)
+
+        with _wf1:
+            # Selling price slider - range ±50% around current price
+            _pc_price_lo  = max(0.0001, _pc_price * 0.5)
+            _pc_price_hi  = max(_pc_price * 1.5, _pc_price + 1.0)
+            _wi_price = st.slider(
+                f"Adjusted Selling Price ({_pc_price_unit})",
+                min_value=float(_pc_price_lo),
+                max_value=float(_pc_price_hi),
+                value=float(_pc_price),
+                step=float(max(0.0001, (_pc_price_hi - _pc_price_lo) / 200)),
+                format="%.4f",
+                key="pc_wi_price",
+            )
+
+        with _wf2:
+            # Labour slider  - most common variable cost
+            _pc_lab_lo = 0.0
+            _pc_lab_hi = max(_pc_labour * 2.0, _pc_labour + 100.0)
+            _wi_labour = st.slider(
+                f"Adjusted Labour Expenses ({_pc_curr_sym})",
+                min_value=float(_pc_lab_lo),
+                max_value=float(_pc_lab_hi),
+                value=float(_pc_labour),
+                step=float(max(1.0, (_pc_lab_hi - _pc_lab_lo) / 200)),
+                format="%.2f",
+                key="pc_wi_labour",
+            )
+
+        # Recalculate with adjusted values
+        if "per tonne" in _pc_price_unit:
+            _wi_price_per_kg = _wi_price / 1000.0
+        elif "per quintal" in _pc_price_unit:
+            _wi_price_per_kg = _wi_price / 100.0
+        else:
+            _wi_price_per_kg = _wi_price
+
+        _wi_total_exp = (
+            _pc_seed + _pc_fert + _pc_pest_exp +
+            _wi_labour + _pc_irrig + _pc_other
+        )
+        _wi_revenue = _pc_prod_kg * _wi_price_per_kg
+        _wi_profit  = _wi_revenue - _wi_total_exp
+        _wi_margin  = (_wi_profit / _wi_revenue * 100) if _wi_revenue > 0 else 0.0
+        _wi_is_p    = _wi_profit >= 0
+
+        _wk1, _wk2, _wk3, _wk4 = st.columns(4)
+        with _wk1:
+            render_kpi_card(
+                "Scenario Revenue",
+                f"{_pc_curr_sym} {_wi_revenue:,.2f}",
+                "With adjusted price",
+                "💵",
+                "#10B981",
+            )
+        with _wk2:
+            render_kpi_card(
+                "Scenario Expenses",
+                f"{_pc_curr_sym} {_wi_total_exp:,.2f}",
+                "With adjusted labour",
+                "📋",
+                "#84CC16",
+            )
+        with _wk3:
+            _wi_accent = "#10B981" if _wi_is_p else "#DC2626"
+            render_kpi_card(
+                "Scenario Profit" if _wi_is_p else "Scenario Loss",
+                f"{_pc_curr_sym} {abs(_wi_profit):,.2f}",
+                "Revenue minus expenses",
+                "📈" if _wi_is_p else "📉",
+                _wi_accent,
+            )
+        with _wk4:
+            render_kpi_card(
+                "Scenario Margin",
+                f"{_wi_margin:.1f}%",
+                "Of scenario revenue",
+                "💯",
+                "#10B981" if _wi_margin >= 0 else "#DC2626",
+            )
+
+    # ----------------------------------------------------------------
+    # STEP 11  Detailed calculation summary table
+    # ----------------------------------------------------------------
+
+    st.write("")
+    with st.expander("📋 View Full Calculation Breakdown"):
+        _summary_df = pd.DataFrame({
+            "Item": [
+                "Predicted Yield",
+                "Harvest % Applied",
+                "Effective Yield (after harvest %)",
+                "Cultivated Land Area",
+                "Total Production (kg)",
+                "Total Production (tonnes)",
+                "Selling Price per kg",
+                "Estimated Revenue",
+                "Seed Expenses",
+                "Fertilizer Expenses",
+                "Pesticide Expenses",
+                "Labour Expenses",
+                "Irrigation Expenses",
+                "Other Expenses",
+                "Total Expenses",
+                "Estimated Profit / Loss",
+                "Profit Margin",
+            ],
+            "Value": [
+                f"{_pc_yield_input:,.2f} hg/ha",
+                f"{_pc_harvest_pct}%",
+                f"{_pc_eff_yield_hgha:,.2f} hg/ha",
+                f"{_pc_land:,.2f} ha",
+                f"{_pc_prod_kg:,.4f} kg",
+                f"{_pc_prod_kg / 1000:,.6f} tonnes",
+                f"{_pc_curr_sym} {_pc_price_per_kg:.4f} / kg",
+                f"{_pc_curr_sym} {_pc_revenue:,.2f}",
+                f"{_pc_curr_sym} {_pc_seed:,.2f}",
+                f"{_pc_curr_sym} {_pc_fert:,.2f}",
+                f"{_pc_curr_sym} {_pc_pest_exp:,.2f}",
+                f"{_pc_curr_sym} {_pc_labour:,.2f}",
+                f"{_pc_curr_sym} {_pc_irrig:,.2f}",
+                f"{_pc_curr_sym} {_pc_other:,.2f}",
+                f"{_pc_curr_sym} {_pc_total_expenses:,.2f}",
+                f"{_pc_curr_sym} {_pc_profit:,.2f}",
+                f"{_pc_margin:.2f}%",
+            ],
+        })
+        st.dataframe(_summary_df, use_container_width=True, hide_index=True)
+
+    # ----------------------------------------------------------------
+    # STEP 12  Disclaimers
+    # ----------------------------------------------------------------
+
+    st.markdown(
+        """
+        <div class="agri-callout">
+            ℹ️ <strong>Important Disclaimers:</strong>
+            All values shown here are <strong>estimates only</strong>. They are based
+            on the predicted yield from the ML model and the figures you entered.
+            Actual harvest, revenue and profit depend on many real-world factors
+            including weather, pest pressure, market price fluctuations, post-harvest
+            losses, transportation and storage costs. This calculator is a planning
+            aid, not a financial guarantee.
+            &nbsp;&mdash;&nbsp;
+            <strong>Unit note:</strong> The model predicts yield in hg/ha
+            (hectograms per hectare). 1 hg = 0.1 kg, so 1 hg/ha over 1 hectare
+            produces 0.1 kg of crop.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ==========================================================
+# 20. CROP HEALTH MONITOR PAGE
+# ==========================================================
+
+elif page == "🌿 Crop Health Monitor":
+
+    import sys as _sys, os as _os
+    _app_dir = _os.path.dirname(_os.path.abspath(__file__))
+    if _app_dir not in _sys.path:
+        _sys.path.insert(0, _app_dir)
+
+    import crop_health as _ch
+
+    render_page_header(
+        "🌿",
+        "Crop Health Monitor",
+        "Upload a crop leaf photograph to check for signs of disease or healthy condition.",
+        badge="AI Image Analysis",
+    )
+
+    # ----------------------------------------------------------------
+    # Model info banner
+    # ----------------------------------------------------------------
+
+    _mi = _ch.model_info()
+
+    if _mi["mode"] == "plantvillage":
+        st.markdown(
+            f"""
+            <div class="agri-callout">
+                🤖 <strong>Model loaded:</strong> Fine-tuned MobileNetV2
+                on PlantVillage dataset &mdash; {_mi["num_classes"]} crop-disease classes.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    elif _mi["mode"] == "imagenet_fallback":
+        st.markdown(
+            """
+            <div class="agri-callout" style="border-left-color:#F59E0B;background:#FFFBEB;">
+                ⚠️ <strong>Fallback mode active.</strong>
+                No PlantVillage fine-tuned model found in <code>models/</code>.
+                Using ImageNet MobileNetV2 weights &mdash; general plant/leaf
+                detection only, not full 38-class crop-disease classification.
+                &nbsp; To enable full disease detection, place
+                <code>plant_disease_model.h5</code> in the <code>models/</code> folder.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            """
+            <div class="agri-callout" style="border-left-color:#DC2626;background:#FEF2F2;">
+                ❌ <strong>Model unavailable.</strong>
+                TensorFlow could not be loaded or the model file is missing.
+                The image upload interface is shown below, but classification
+                cannot run until the model is available.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if _mi.get("error"):
+            with st.expander("Show technical error"):
+                st.code(_mi["error"])
+
+    # ----------------------------------------------------------------
+    # Instructions
+    # ----------------------------------------------------------------
+
+    st.write("")
+    with st.container(border=True):
+        st.markdown(
+            '<div class="section-heading">📷 How to Use</div>',
+            unsafe_allow_html=True,
+        )
+        _hc1, _hc2, _hc3 = st.columns(3)
+        with _hc1:
+            st.markdown(
+                """
+                <div class="agri-card" style="text-align:center;padding:18px 14px;">
+                  <div style="font-size:1.8rem;margin-bottom:8px;">📸</div>
+                  <div style="font-weight:700;color:#14532D;margin-bottom:6px;font-size:.95rem;">
+                    1. Take a clear photo
+                  </div>
+                  <div style="font-size:.85rem;color:#6B7280;line-height:1.5;">
+                    Photograph a single leaf in good natural light.
+                    Keep the leaf in focus and fill the frame.
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with _hc2:
+            st.markdown(
+                """
+                <div class="agri-card" style="text-align:center;padding:18px 14px;">
+                  <div style="font-size:1.8rem;margin-bottom:8px;">📤</div>
+                  <div style="font-weight:700;color:#14532D;margin-bottom:6px;font-size:.95rem;">
+                    2. Upload the image
+                  </div>
+                  <div style="font-size:.85rem;color:#6B7280;line-height:1.5;">
+                    Drag and drop or browse to select a JPG, JPEG or PNG file.
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        with _hc3:
+            st.markdown(
+                """
+                <div class="agri-card" style="text-align:center;padding:18px 14px;">
+                  <div style="font-size:1.8rem;margin-bottom:8px;">🔍</div>
+                  <div style="font-weight:700;color:#14532D;margin-bottom:6px;font-size:.95rem;">
+                    3. Review the result
+                  </div>
+                  <div style="font-size:.85rem;color:#6B7280;line-height:1.5;">
+                    The model identifies crop and disease class with a
+                    confidence score and next-step recommendations.
+                  </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    # ----------------------------------------------------------------
+    # Image upload
+    # ----------------------------------------------------------------
+
+    st.write("")
+    st.markdown(
+        '<div class="section-heading">📂 Upload Leaf Image</div>',
+        unsafe_allow_html=True,
+    )
+
+    _uploaded = st.file_uploader(
+        "Drag and drop a leaf photograph here, or click Browse",
+        type=["jpg", "jpeg", "png"],
+        key="ch_upload",
+        help="Supported formats: JPG, JPEG, PNG. Maximum recommended size: 10 MB.",
+        label_visibility="collapsed",
+    )
+
+    if _uploaded is None:
+        st.markdown(
+            """
+            <div class="empty-state-card">
+              <div class="empty-state-icon">🌿</div>
+              <div class="empty-state-title">No image uploaded yet</div>
+              <div class="empty-state-text">
+                Upload a JPG, JPEG or PNG photograph of a crop leaf above
+                to start the health analysis.
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        # ---- Validate format ------------------------------------------------
+        _fname = _uploaded.name.lower()
+        if not any(_fname.endswith(ext) for ext in [".jpg", ".jpeg", ".png"]):
+            st.error(
+                "❌ Unsupported file format. "
+                "Please upload a JPG, JPEG or PNG image."
+            )
+        else:
+            _img_bytes = _uploaded.getvalue()
+
+            # ---- Validate it opens as an image ------------------------------
+            try:
+                from PIL import Image as _PILImage
+                import io as _io
+                _pil_img = _PILImage.open(_io.BytesIO(_img_bytes)).convert("RGB")
+                _img_valid = True
+            except Exception as _img_err:
+                st.error(
+                    f"❌ The uploaded file could not be opened as an image: "
+                    f"{_img_err}"
+                )
+                _img_valid = False
+
+            if _img_valid:
+                # ---- Display uploaded image ----------------------------------
+                _img_col, _btn_col = st.columns([2, 1])
+                with _img_col:
+                    st.image(
+                        _pil_img,
+                        caption=f"Uploaded: {_uploaded.name}  "
+                                f"({_pil_img.size[0]}×{_pil_img.size[1]} px)",
+                        use_container_width=True,
+                    )
+
+                with _btn_col:
+                    st.write("")
+                    st.markdown(
+                        f"""
+                        <div class="agri-card" style="padding:16px 18px;">
+                          <div style="font-size:.8rem;font-weight:600;
+                                      color:#6B7280;margin-bottom:4px;">
+                            File details
+                          </div>
+                          <div style="font-weight:700;color:#14532D;
+                                      font-size:.95rem;word-break:break-all;">
+                            {html.escape(_uploaded.name)}
+                          </div>
+                          <div style="font-size:.82rem;color:#6B7280;margin-top:4px;">
+                            {len(_img_bytes)/1024:.1f} KB
+                            &nbsp;&middot;&nbsp;
+                            {_pil_img.size[0]}×{_pil_img.size[1]} px
+                          </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                    st.write("")
+                    _run_analysis = st.button(
+                        "🔍 Analyse Leaf",
+                        type="primary",
+                        use_container_width=True,
+                        key="ch_analyse_btn",
+                    )
+
+                # ---- Auto-analyse or button click ---------------------------
+                # Keep the last result in session state so it persists on
+                # slider/widget interactions without re-uploading.
+                _ss_key = "ch_last_result"
+                _ss_img  = "ch_last_img_name"
+
+                if _run_analysis or (
+                    _ss_key in st.session_state
+                    and st.session_state.get(_ss_img) == _uploaded.name
+                ):
+                    if _run_analysis:
+                        with st.spinner("🔍 Analysing leaf image…"):
+                            _result = _ch.classify_image(_img_bytes)
+                        st.session_state[_ss_key] = _result
+                        st.session_state[_ss_img]  = _uploaded.name
+                    else:
+                        _result = st.session_state[_ss_key]
+
+                    # ---- Results display ------------------------------------
+                    st.write("")
+                    st.markdown(
+                        '<div class="section-heading">📊 Analysis Result</div>',
+                        unsafe_allow_html=True,
+                    )
+
+                    _hs = _result["health_status"]
+                    _conf = _result["confidence"]
+
+                    # Status colours
+                    _hs_styles = {
+                        "Healthy": {
+                            "bg": "#ECFDF5", "border": "#6EE7B7",
+                            "accent": "#10B981", "text": "#14532D",
+                            "icon": "🟢",
+                        },
+                        "Disease Detected": {
+                            "bg": "#FEF2F2", "border": "#FECACA",
+                            "accent": "#DC2626", "text": "#991B1B",
+                            "icon": "🔴",
+                        },
+                        "Uncertain": {
+                            "bg": "#FFFBEB", "border": "#FDE68A",
+                            "accent": "#D97706", "text": "#92400E",
+                            "icon": "🟡",
+                        },
+                    }
+                    _sty = _hs_styles.get(_hs, _hs_styles["Uncertain"])
+
+                    if _result.get("error"):
+                        st.error(
+                            f"❌ Analysis error: {_result['error']}"
+                        )
+                    else:
+                        # ---- Main result card --------------------------------
+                        _rc1, _rc2 = st.columns([1, 1])
+
+                        with _rc1:
+                            # Health status card
+                            st.markdown(
+                                f"""
+                                <div style="background:{_sty['bg']};
+                                            border:2px solid {_sty['border']};
+                                            border-radius:16px;
+                                            padding:22px 24px;">
+                                  <div style="font-size:2.5rem;margin-bottom:8px;">
+                                    {_sty['icon']}
+                                  </div>
+                                  <div style="font-size:1.3rem;font-weight:800;
+                                              color:{_sty['text']};
+                                              margin-bottom:6px;">
+                                    {html.escape(_hs)}
+                                  </div>
+                                  <div style="font-size:.92rem;color:{_sty['text']};
+                                              opacity:.85;margin-bottom:12px;">
+                                    {html.escape(_result['condition'])}
+                                  </div>
+                                  <div style="font-size:.8rem;font-weight:600;
+                                              color:{_sty['text']};
+                                              margin-bottom:4px;">
+                                    Model Confidence
+                                  </div>
+                                  <div style="background:#E5E7EB;border-radius:999px;
+                                              height:10px;overflow:hidden;
+                                              margin-bottom:4px;">
+                                    <div style="width:{min(_conf,100):.1f}%;
+                                                height:100%;
+                                                background:{_sty['accent']};
+                                                border-radius:999px;">
+                                    </div>
+                                  </div>
+                                  <div style="font-size:1.1rem;font-weight:800;
+                                              color:{_sty['text']};">
+                                    {_conf:.1f}%
+                                  </div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
+
+                        with _rc2:
+                            # Crop & class details
+                            render_kpi_card(
+                                "Detected Crop",
+                                _result["crop"],
+                                "Identified from image",
+                                "🌾",
+                                "#10B981",
+                            )
+                            st.write("")
+                            render_kpi_card(
+                                "Disease / Condition",
+                                _result["condition"],
+                                "Predicted class",
+                                "🧪",
+                                _sty["accent"],
+                            )
+
+                        # ---- Low confidence warning -------------------------
+                        if _conf < 50.0:
+                            st.warning(
+                                f"⚠️ Low confidence ({_conf:.1f}%). "
+                                "Try uploading a clearer photograph with better "
+                                "lighting and a sharper focus on the leaf surface."
+                            )
+
+                        # ---- Fallback mode notice ---------------------------
+                        if _result["mode"] == "imagenet_fallback":
+                            st.info(
+                                "💡 Running in fallback mode (ImageNet weights). "
+                                "For full 38-class PlantVillage disease detection, "
+                                "place a fine-tuned "
+                                "`plant_disease_model.h5` in the `models/` folder."
+                            )
+
+                        # ---- Top-3 predictions table ------------------------
+                        if _result["top3"]:
+                            st.write("")
+                            with st.container(border=True):
+                                st.markdown(
+                                    '<div class="section-heading">🎯 Top Predictions</div>',
+                                    unsafe_allow_html=True,
+                                )
+                                _t3_df = pd.DataFrame(
+                                    _result["top3"],
+                                    columns=["Predicted Class", "Confidence (%)"],
+                                )
+                                _t3_df["Confidence (%)"] = _t3_df["Confidence (%)"].round(2)
+                                st.dataframe(
+                                    _t3_df,
+                                    use_container_width=True,
+                                    hide_index=True,
+                                )
+
+                        # ---- Confidence bar chart ---------------------------
+                        if len(_result["top3"]) >= 2:
+                            st.write("")
+                            with st.container(border=True):
+                                st.markdown(
+                                    '<div class="section-heading">📈 Confidence Comparison</div>',
+                                    unsafe_allow_html=True,
+                                )
+                                _top3_labels = [
+                                    t[0].split("___")[-1].replace("_", " ")
+                                    if "___" in t[0]
+                                    else t[0].replace("_", " ")
+                                    for t in _result["top3"]
+                                ]
+                                _top3_confs = [t[1] for t in _result["top3"]]
+                                _conf_df = pd.DataFrame({
+                                    "Class":      _top3_labels,
+                                    "Confidence": _top3_confs,
+                                })
+                                _conf_bars = (
+                                    alt.Chart(_conf_df)
+                                    .mark_bar(cornerRadiusEnd=5, size=28)
+                                    .encode(
+                                        y=alt.Y(
+                                            "Class:N",
+                                            sort="-x",
+                                            title=None,
+                                            axis=alt.Axis(
+                                                labelColor="#1F2937",
+                                                labelFontSize=12,
+                                                labelLimit=260,
+                                            ),
+                                        ),
+                                        x=alt.X(
+                                            "Confidence:Q",
+                                            title="Confidence (%)",
+                                            scale=alt.Scale(domain=[0, 100]),
+                                            axis=alt.Axis(
+                                                labelColor="#6B7280",
+                                                titleColor="#1F2937",
+                                                gridColor="#EEF2EC",
+                                            ),
+                                        ),
+                                        color=alt.condition(
+                                            alt.datum.Class == _top3_labels[0],
+                                            alt.value("#14532D"),
+                                            alt.value("#6EE7B7"),
+                                        ),
+                                        tooltip=[
+                                            alt.Tooltip("Class:N"),
+                                            alt.Tooltip(
+                                                "Confidence:Q",
+                                                format=".2f",
+                                            ),
+                                        ],
+                                    )
+                                )
+                                _conf_lbl = (
+                                    alt.Chart(_conf_df)
+                                    .mark_text(
+                                        align="left",
+                                        baseline="middle",
+                                        dx=5,
+                                        fontSize=12,
+                                        fontWeight="bold",
+                                        color="#1F2937",
+                                    )
+                                    .encode(
+                                        y=alt.Y("Class:N", sort="-x"),
+                                        x="Confidence:Q",
+                                        text=alt.Text(
+                                            "Confidence:Q", format=".1f"
+                                        ),
+                                    )
+                                )
+                                st.altair_chart(
+                                    (_conf_bars + _conf_lbl)
+                                    .properties(height=180)
+                                    .configure_view(strokeWidth=0),
+                                    use_container_width=True,
+                                )
+
+                        # ---- Recommendations --------------------------------
+                        st.write("")
+                        st.markdown(
+                            '<div class="section-heading">🌱 Recommendations</div>',
+                            unsafe_allow_html=True,
+                        )
+                        _recs = _ch.get_recommendations(
+                            _hs,
+                            _result["condition"],
+                            _result["crop"],
+                        )
+                        render_insight_list_card(
+                            "Next Steps",
+                            _recs,
+                            bullet_icon="✔️",
+                        )
+
+                        # ---- Disclaimer -------------------------------------
+                        st.markdown(
+                            """
+                            <div class="agri-callout">
+                                ℹ️ <strong>Disclaimer:</strong>
+                                This is an AI-based preliminary assessment of a
+                                single leaf image. It is <strong>not</strong> a
+                                confirmed agricultural diagnosis. Results depend
+                                on image quality, lighting and whether the crop
+                                is in the model's training data. Always consult
+                                a qualified agricultural expert before taking
+                                action on crop disease.
+                            </div>
+                            """,
+                            unsafe_allow_html=True,
+                        )
+
+    # ----------------------------------------------------------------
+    # Supported classes expander
+    # ----------------------------------------------------------------
+
+    st.write("")
+    with st.expander("📋 Supported Crops and Disease Classes"):
+        st.markdown(
+            """
+            The full 38-class PlantVillage model supports:
+            **Apple, Blueberry, Cherry, Corn (Maize), Grape, Orange,
+            Peach, Pepper, Potato, Raspberry, Soybean, Squash,
+            Strawberry, Tomato.**
+
+            Each crop has one or more disease classes plus a **healthy** class.
+            In fallback (ImageNet) mode, only general plant/non-plant
+            detection is available.
+            """,
+        )
+
+        _cls_df = pd.DataFrame({
+            "Index": range(len(_ch.PLANT_VILLAGE_CLASSES)),
+            "Class Label": _ch.PLANT_VILLAGE_CLASSES,
+        })
+        st.dataframe(_cls_df, use_container_width=True, hide_index=True)
