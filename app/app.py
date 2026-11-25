@@ -1,8 +1,9 @@
-
+import html
 import os
 import joblib
 import numpy as np
 import pandas as pd
+import altair as alt
 import streamlit as st
 
 from sklearn.compose import ColumnTransformer
@@ -22,12 +23,937 @@ from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 st.set_page_config(
     page_title="Crop Yield Prediction",
     page_icon="🌾",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 
 # ==========================================================
-# 2. PROJECT PATHS
+# 2. DESIGN SYSTEM & CUSTOM STYLING
+# ==========================================================
+
+STATUS_STYLES = {
+    "Poor": {
+        "bg": "#FEF2F2",
+        "border": "#FECACA",
+        "accent": "#DC2626",
+        "text": "#991B1B",
+        "badge_bg": "#FEE2E2",
+        "tier": "Poor",
+    },
+    "Average": {
+        "bg": "#FFF7ED",
+        "border": "#FED7AA",
+        "accent": "#EA580C",
+        "text": "#9A3412",
+        "badge_bg": "#FFEDD5",
+        "tier": "Average",
+    },
+    "Good": {
+        "bg": "#FEFCE8",
+        "border": "#FDE047",
+        "accent": "#CA8A04",
+        "text": "#854D0E",
+        "badge_bg": "#FEF9C3",
+        "tier": "Good",
+    },
+    "Excellent": {
+        "bg": "#ECFDF5",
+        "border": "#6EE7B7",
+        "accent": "#10B981",
+        "text": "#14532D",
+        "badge_bg": "#D1FAE5",
+        "tier": "Excellent",
+    },
+}
+
+
+def get_status_style(status_text):
+    for key, style in STATUS_STYLES.items():
+        if key in status_text:
+            return style
+    return STATUS_STYLES["Excellent"]
+
+
+def inject_custom_css():
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap');
+
+        :root {
+            --primary: #14532D;
+            --secondary: #10B981;
+            --accent: #84CC16;
+            --bg: #F5F8F5;
+            --card: #FFFFFF;
+            --text: #1F2937;
+            --muted: #6B7280;
+            --border: #E5E7EB;
+        }
+
+        html, body, [class*="css"], .stApp {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            color: #1F2937;
+            font-variant-numeric: tabular-nums;
+        }
+
+        h1, h2, h3, .hero-title, .agri-page-title, .section-heading {
+            font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        .stApp {
+            background-color: #F5F8F5;
+        }
+
+        /* Clean SaaS chrome */
+        #MainMenu, footer {
+            visibility: hidden;
+        }
+
+        header[data-testid="stHeader"] {
+            background: transparent;
+        }
+
+        /* Main container layout */
+        .main .block-container {
+            max-width: 1200px;
+            padding: 1.75rem 2.25rem 3rem 2.25rem;
+        }
+
+        @media (max-width: 768px) {
+            .main .block-container {
+                padding: 1.15rem 1rem 2rem 1rem;
+            }
+        }
+
+        /* Distinct Deep Forest Sidebar */
+        section[data-testid="stSidebar"] {
+            background: linear-gradient(180deg, #14532D 0%, #0F3E22 100%);
+            border-right: 1px solid #0B311A;
+        }
+
+        section[data-testid="stSidebar"] .block-container {
+            padding-top: 1.25rem;
+            padding-bottom: 1.5rem;
+        }
+
+        section[data-testid="stSidebar"] button[kind="header"],
+        section[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] svg {
+            color: #ECFDF5 !important;
+            fill: #ECFDF5 !important;
+        }
+
+        .sidebar-brand {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 14px;
+            padding: 16px;
+            margin-bottom: 18px;
+        }
+
+        .sidebar-brand-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .sidebar-logo {
+            width: 42px;
+            height: 42px;
+            border-radius: 11px;
+            background: linear-gradient(135deg, #10B981 0%, #84CC16 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
+        }
+
+        .sidebar-brand-title {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 1.02rem;
+            font-weight: 700;
+            color: #FFFFFF;
+            line-height: 1.2;
+        }
+
+        .sidebar-brand-sub {
+            font-size: 0.76rem;
+            color: #BBF7D0;
+            line-height: 1.35;
+            margin-top: 3px;
+        }
+
+        .sidebar-section-label {
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #86EFAC;
+            margin: 6px 4px 8px 4px;
+        }
+
+        /* Sidebar Nav Items */
+        section[data-testid="stSidebar"] div[role="radiogroup"] {
+            gap: 6px;
+        }
+
+        section[data-testid="stSidebar"] div[role="radiogroup"] label {
+            background: transparent;
+            border: 1px solid transparent;
+            border-radius: 10px;
+            padding: 10px 13px !important;
+            margin: 0 !important;
+            width: 100%;
+            transition: background-color 0.18s ease, border-color 0.18s ease, transform 0.14s ease;
+            cursor: pointer;
+        }
+
+        section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {
+            background-color: rgba(255, 255, 255, 0.09);
+            border-color: rgba(255, 255, 255, 0.12);
+            transform: translateX(2px);
+        }
+
+        section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) {
+            background: rgba(16, 185, 129, 0.22);
+            border-color: rgba(132, 204, 22, 0.45);
+            box-shadow: inset 3.5px 0 0 #84CC16;
+        }
+
+        section[data-testid="stSidebar"] div[role="radiogroup"] label > div:first-child {
+            display: none !important;
+        }
+
+        section[data-testid="stSidebar"] div[role="radiogroup"] label p {
+            font-size: 0.93rem !important;
+            font-weight: 500 !important;
+            color: #DCFCE7 !important;
+            margin: 0 !important;
+        }
+
+        section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) p {
+            font-weight: 700 !important;
+            color: #FFFFFF !important;
+        }
+
+        .sidebar-footer-card {
+            background: rgba(255, 255, 255, 0.07);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 12px;
+            padding: 12px 14px;
+            margin-top: 14px;
+        }
+
+        .sidebar-footer-title {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: #84CC16;
+            margin-bottom: 3px;
+        }
+
+        .sidebar-footer-sub {
+            font-size: 0.77rem;
+            color: #D1FAE5;
+            line-height: 1.4;
+        }
+
+        /* Page Header */
+        .agri-page-header {
+            background: #FFFFFF;
+            border: 1px solid #E5E7EB;
+            border-left: 5px solid #14532D;
+            border-radius: 16px;
+            padding: 20px 24px;
+            margin-bottom: 1.4rem;
+            box-shadow: 0 1px 3px rgba(17, 24, 39, 0.04), 0 4px 14px rgba(20, 83, 45, 0.03);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+        }
+
+        .agri-page-header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .agri-page-icon {
+            width: 50px;
+            height: 50px;
+            border-radius: 13px;
+            background: linear-gradient(135deg, #ECFDF5 0%, #DCFCE7 100%);
+            border: 1px solid #A7F3D0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .agri-page-title {
+            font-size: 1.6rem;
+            font-weight: 800;
+            color: #14532D;
+            margin: 0;
+            line-height: 1.2;
+            letter-spacing: -0.02em;
+        }
+
+        .agri-page-desc {
+            font-size: 0.94rem;
+            color: #6B7280;
+            margin: 4px 0 0 0;
+            line-height: 1.45;
+        }
+
+        .agri-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: #ECFDF5;
+            color: #14532D;
+            border: 1px solid #A7F3D0;
+            border-radius: 999px;
+            padding: 6px 13px;
+            font-size: 0.77rem;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 640px) {
+            .agri-page-header {
+                flex-direction: column;
+                align-items: flex-start;
+                padding: 16px 18px;
+            }
+            .agri-page-title {
+                font-size: 1.32rem;
+            }
+        }
+
+        /* Executive Hero Banner */
+        .hero-gradient-banner {
+            background: linear-gradient(135deg, #14532D 0%, #166534 58%, #0D6E48 100%);
+            border-radius: 20px;
+            padding: 32px 34px;
+            color: #FFFFFF;
+            box-shadow: 0 10px 30px rgba(20, 83, 45, 0.16);
+            margin-bottom: 1.25rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero-kicker {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(132, 204, 22, 0.18);
+            color: #D9F99D;
+            border: 1px solid rgba(132, 204, 22, 0.4);
+            border-radius: 999px;
+            padding: 5px 13px;
+            font-size: 0.77rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            margin-bottom: 14px;
+        }
+
+        .hero-title {
+            font-size: 2.3rem;
+            font-weight: 800;
+            color: #FFFFFF;
+            line-height: 1.12;
+            margin: 0 0 8px 0;
+            letter-spacing: -0.025em;
+        }
+
+        .hero-subtitle {
+            font-size: 1.08rem;
+            font-weight: 600;
+            color: #A7F3D0;
+            margin: 0 0 14px 0;
+        }
+
+        .hero-body {
+            font-size: 0.96rem;
+            color: #ECFDF5;
+            line-height: 1.65;
+            margin: 0;
+            opacity: 0.94;
+        }
+
+        /* Cards */
+        .agri-card {
+            background: #FFFFFF;
+            border: 1px solid #E5E7EB;
+            border-radius: 14px;
+            padding: 20px 22px;
+            box-shadow: 0 1px 3px rgba(17, 24, 39, 0.04);
+            transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+            height: 100%;
+        }
+
+        .agri-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 22px rgba(20, 83, 45, 0.07);
+            border-color: #D1FAE5;
+        }
+
+        .kpi-card {
+            background: #FFFFFF;
+            border: 1px solid #E5E7EB;
+            border-top: 3px solid #10B981;
+            border-radius: 14px;
+            padding: 18px 20px;
+            box-shadow: 0 1px 3px rgba(17, 24, 39, 0.04);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            height: 100%;
+            transition: transform 0.18s ease, box-shadow 0.18s ease;
+        }
+
+        .kpi-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(20, 83, 45, 0.07);
+        }
+
+        .kpi-label {
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: #6B7280;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .kpi-value {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 1.7rem;
+            font-weight: 800;
+            color: #14532D;
+            line-height: 1.2;
+            word-break: break-word;
+        }
+
+        .kpi-sub {
+            font-size: 0.78rem;
+            color: #6B7280;
+        }
+
+        /* Feature & Navigation Cards */
+        .feature-item-card {
+            background: #FFFFFF;
+            border: 1px solid #E5E7EB;
+            border-radius: 12px;
+            padding: 13px 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 1px 2px rgba(17, 24, 39, 0.03);
+            margin-bottom: 10px;
+            transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+        }
+
+        .feature-item-card:hover {
+            transform: translateY(-1px);
+            border-color: #10B981;
+            box-shadow: 0 6px 14px rgba(20, 83, 45, 0.06);
+        }
+
+        .feature-item-icon {
+            width: 38px;
+            height: 38px;
+            border-radius: 10px;
+            background: #ECFDF5;
+            border: 1px solid #A7F3D0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.05rem;
+            flex-shrink: 0;
+        }
+
+        .feature-item-text {
+            font-size: 0.93rem;
+            font-weight: 600;
+            color: #1F2937;
+            line-height: 1.35;
+        }
+
+        /* Section Headings */
+        .section-heading {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: #14532D;
+            margin: 0.35rem 0 0.75rem 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .section-subtext {
+            font-size: 0.92rem;
+            color: #6B7280;
+            margin: -0.35rem 0 0.85rem 0;
+            line-height: 1.5;
+        }
+
+        .input-group-label {
+            font-size: 0.76rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: #10B981;
+            margin-bottom: 8px;
+        }
+
+        /* Prediction Highlight Spotlight */
+        .prediction-hero-card {
+            background: linear-gradient(135deg, #14532D 0%, #166534 70%, #0F766E 100%);
+            border-radius: 18px;
+            padding: 24px 26px;
+            color: #FFFFFF;
+            box-shadow: 0 10px 25px rgba(20, 83, 45, 0.16);
+            height: 100%;
+        }
+
+        .prediction-eyebrow {
+            font-size: 0.78rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: #A7F3D0;
+            margin-bottom: 8px;
+        }
+
+        .prediction-number {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 2.55rem;
+            font-weight: 800;
+            color: #FFFFFF;
+            line-height: 1.08;
+            margin-bottom: 8px;
+        }
+
+        .prediction-unit {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: #84CC16;
+        }
+
+        .prediction-pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 14px;
+        }
+
+        .prediction-pill {
+            background: rgba(255, 255, 255, 0.14);
+            border: 1px solid rgba(255, 255, 255, 0.22);
+            border-radius: 999px;
+            padding: 4px 12px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #FFFFFF;
+        }
+
+        .status-result-card {
+            border-radius: 18px;
+            padding: 22px 24px;
+            box-shadow: 0 4px 14px rgba(17, 24, 39, 0.04);
+            height: 100%;
+        }
+
+        .status-pill-badge {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-size: 0.94rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .tier-track {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px;
+            margin: 10px 0 12px 0;
+        }
+
+        .tier-step {
+            text-align: center;
+            font-size: 0.72rem;
+            font-weight: 600;
+            padding: 5px 4px;
+            border-radius: 7px;
+            background: rgba(255, 255, 255, 0.65);
+            border: 1px solid rgba(0, 0, 0, 0.08);
+            color: #6B7280;
+        }
+
+        .tier-step-active {
+            font-weight: 800;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+        }
+
+        .status-message-text {
+            font-size: 0.93rem;
+            line-height: 1.5;
+            margin: 0 0 12px 0;
+            font-weight: 500;
+        }
+
+        .status-meta-row {
+            font-size: 0.83rem;
+            padding-top: 10px;
+            border-top: 1px solid rgba(0, 0, 0, 0.08);
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        /* Model Comparison Cards */
+        .model-card {
+            background: #FFFFFF;
+            border: 1px solid #E5E7EB;
+            border-radius: 14px;
+            padding: 16px 18px;
+            box-shadow: 0 1px 3px rgba(17, 24, 39, 0.04);
+            transition: transform 0.18s ease, box-shadow 0.18s ease;
+            height: 100%;
+        }
+
+        .model-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(20, 83, 45, 0.08);
+        }
+
+        .model-card-best {
+            background: linear-gradient(180deg, #ECFDF5 0%, #FFFFFF 45%);
+            border: 1.5px solid #10B981;
+            box-shadow: 0 6px 18px rgba(16, 185, 129, 0.12);
+        }
+
+        .model-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .model-card-name {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 0.98rem;
+            font-weight: 700;
+            color: #14532D;
+        }
+
+        .model-best-pill {
+            background: #14532D;
+            color: #D9F99D;
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 3px 9px;
+            border-radius: 999px;
+        }
+
+        .model-metric-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            padding: 5px 0;
+            border-bottom: 1px solid #F3F4F6;
+        }
+
+        .model-metric-row:last-child {
+            border-bottom: none;
+        }
+
+        /* Insight Cards */
+        .insight-list-card {
+            background: #FFFFFF;
+            border: 1px solid #E5E7EB;
+            border-radius: 14px;
+            padding: 18px 20px;
+            box-shadow: 0 1px 3px rgba(17, 24, 39, 0.04);
+            height: 100%;
+        }
+
+        .insight-list-title {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 1.02rem;
+            font-weight: 700;
+            color: #14532D;
+            margin: 0 0 12px 0;
+        }
+
+        .insight-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            background: #F5F8F5;
+            border: 1px solid #E5E7EB;
+            margin-bottom: 8px;
+            font-size: 0.91rem;
+            color: #1F2937;
+            line-height: 1.48;
+        }
+
+        .insight-item:last-child {
+            margin-bottom: 0;
+        }
+
+        /* Callout Banner */
+        .agri-callout {
+            background: #ECFDF5;
+            border: 1px solid #A7F3D0;
+            border-left: 4px solid #10B981;
+            border-radius: 12px;
+            padding: 14px 18px;
+            font-size: 0.92rem;
+            color: #1F2937;
+            line-height: 1.55;
+            margin: 0.75rem 0;
+        }
+
+        /* Empty State */
+        .empty-state-card {
+            background: #FFFFFF;
+            border: 1.5px dashed #10B981;
+            border-radius: 18px;
+            padding: 38px 28px;
+            text-align: center;
+            max-width: 680px;
+            margin: 1.5rem auto;
+            box-shadow: 0 4px 14px rgba(20, 83, 45, 0.04);
+        }
+
+        .empty-state-icon {
+            font-size: 2.6rem;
+            margin-bottom: 10px;
+        }
+
+        .empty-state-title {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #14532D;
+            margin-bottom: 8px;
+        }
+
+        .empty-state-text {
+            font-size: 0.95rem;
+            color: #6B7280;
+            line-height: 1.6;
+        }
+
+        /* Native Streamlit Component Polish */
+        /* Support both old and new Streamlit border-wrapper selectors */
+        div[data-testid="stVerticalBlockBorderWrapper"],
+        div[data-testid="stVerticalBlock"] > div[style*="border"] {
+            background-color: #FFFFFF;
+            border-color: #E5E7EB !important;
+            border-radius: 16px !important;
+            box-shadow: 0 1px 3px rgba(17, 24, 39, 0.04);
+        }
+
+        div[data-testid="stMetric"] {
+            background-color: #F9FBF9;
+            border: 1px solid #E5E7EB;
+            border-radius: 12px;
+            padding: 12px 14px;
+        }
+
+        div[data-testid="stMetric"] label {
+            color: #6B7280 !important;
+            font-weight: 600 !important;
+            font-size: 0.82rem !important;
+        }
+
+        div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
+            color: #14532D !important;
+            font-weight: 800 !important;
+        }
+
+        .stButton > button {
+            border-radius: 11px !important;
+            font-weight: 600 !important;
+            padding: 0.6rem 1.2rem !important;
+            transition: all 0.18s ease !important;
+        }
+
+        .stButton > button[kind="primary"] {
+            background: linear-gradient(135deg, #14532D 0%, #10B981 100%) !important;
+            border: none !important;
+            color: #FFFFFF !important;
+            box-shadow: 0 4px 12px rgba(20, 83, 45, 0.22) !important;
+        }
+
+        .stButton > button[kind="primary"]:hover {
+            filter: brightness(1.06);
+            transform: translateY(-1px);
+            box-shadow: 0 6px 16px rgba(20, 83, 45, 0.28) !important;
+        }
+
+        .stButton > button[kind="secondary"] {
+            background-color: #FFFFFF !important;
+            border: 1px solid #E5E7EB !important;
+            color: #14532D !important;
+        }
+
+        .stButton > button[kind="secondary"]:hover {
+            background-color: #ECFDF5 !important;
+            border-color: #10B981 !important;
+        }
+
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="input"] > div {
+            border-radius: 10px !important;
+            border-color: #D1D5DB !important;
+            background-color: #FFFFFF !important;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        div[data-baseweb="select"] > div:focus-within,
+        div[data-baseweb="input"] > div:focus-within {
+            border-color: #10B981 !important;
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.16) !important;
+        }
+
+        div[data-testid="stDataFrame"] {
+            border: 1px solid #E5E7EB;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        /* Dataframe header styling */
+        div[data-testid="stDataFrame"] th {
+            background-color: #F5F8F5 !important;
+            color: #14532D !important;
+            font-weight: 700 !important;
+            font-size: 0.82rem !important;
+        }
+
+        /* Section heading inside bordered container gets breathing room */
+        div[data-testid="stVerticalBlockBorderWrapper"] .section-heading,
+        div[data-testid="stVerticalBlock"] .section-heading {
+            margin-top: 0.1rem;
+        }
+
+        /* Spinner text */
+        div[data-testid="stSpinner"] p {
+            color: #14532D !important;
+            font-weight: 600 !important;
+        }
+
+        /* Altair chart container */
+        div[data-testid="stArrowVegaLiteChart"] {
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        /* Success/warning/info boxes */
+        div[data-testid="stAlert"] {
+            border-radius: 10px !important;
+        }
+
+        /* Expander */
+        details summary {
+            font-weight: 600 !important;
+            color: #14532D !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_page_header(icon, title, description, badge=None):
+    badge_html = (
+        f'<span class="agri-badge">{html.escape(badge)}</span>'
+        if badge
+        else ""
+    )
+    st.markdown(
+        f"""
+        <div class="agri-page-header">
+            <div class="agri-page-header-left">
+                <div class="agri-page-icon">{icon}</div>
+                <div>
+                    <h1 class="agri-page-title">{html.escape(title)}</h1>
+                    <p class="agri-page-desc">{html.escape(description)}</p>
+                </div>
+            </div>
+            {badge_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_kpi_card(label, value, subtext="", icon="", accent_color="#10B981"):
+    icon_prefix = f"{icon} " if icon else ""
+    sub_html = (
+        f'<div class="kpi-sub">{html.escape(str(subtext))}</div>'
+        if subtext
+        else ""
+    )
+    st.markdown(
+        f"""
+        <div class="kpi-card" style="border-top-color: {accent_color};">
+            <div class="kpi-label">{icon_prefix}{html.escape(str(label))}</div>
+            <div class="kpi-value">{html.escape(str(value))}</div>
+            {sub_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_info_card(title, description, icon=""):
+    icon_prefix = f"{icon} " if icon else ""
+    st.markdown(
+        f"""
+        <div class="agri-card">
+            <div class="insight-list-title" style="margin-bottom: 6px;">{icon_prefix}{html.escape(str(title))}</div>
+            <div style="font-size: 0.92rem; color: #4B5563; line-height: 1.55;">{html.escape(str(description))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_insight_list_card(title, items, bullet_icon="•"):
+    items_html = "".join(
+        f'<div class="insight-item"><span>{bullet_icon}</span><span>{html.escape(str(item))}</span></div>'
+        for item in items
+    )
+    st.markdown(
+        f"""
+        <div class="insight-list-card">
+            <div class="insight-list-title">{html.escape(title)}</div>
+            {items_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def navigate_to(target_page):
+    st.session_state["nav_page"] = target_page
+
+
+# ==========================================================
+# 3. PROJECT PATHS
 # ==========================================================
 
 BASE_DIR = os.path.dirname(
@@ -44,7 +970,7 @@ DATA_DIR = os.path.join(
 
 
 # ==========================================================
-# 3. LOAD DATASET
+# 4. LOAD DATASET
 # ==========================================================
 
 if not os.path.exists(DATA_DIR):
@@ -84,7 +1010,7 @@ except Exception as error:
 
 
 # ==========================================================
-# 4. VALIDATE DATASET
+# 5. VALIDATE DATASET
 # ==========================================================
 
 required_columns = [
@@ -109,7 +1035,7 @@ if missing_columns:
 
 
 # ==========================================================
-# 5. DATA CLEANING
+# 6. DATA CLEANING
 # ==========================================================
 
 numeric_columns = [
@@ -142,7 +1068,7 @@ if df.empty:
 
 
 # ==========================================================
-# 6. LOAD TRAINED MODEL
+# 7. LOAD TRAINED MODEL
 # ==========================================================
 
 if not os.path.exists(MODEL_PATH):
@@ -160,7 +1086,7 @@ except Exception as error:
 
 
 # ==========================================================
-# 7. CREATE DROPDOWN OPTIONS
+# 8. CREATE DROPDOWN OPTIONS
 # ==========================================================
 
 crop_options = sorted(
@@ -173,7 +1099,7 @@ area_options = sorted(
 
 
 # ==========================================================
-# 8. CROP-SPECIFIC YIELD THRESHOLDS
+# 9. CROP-SPECIFIC YIELD THRESHOLDS
 # ==========================================================
 
 def get_crop_thresholds(crop_name):
@@ -227,7 +1153,7 @@ def classify_yield(value, thresholds):
 
 
 # ==========================================================
-# 9. SELECT HISTORICAL COMPARISON DATA
+# 10. SELECT HISTORICAL COMPARISON DATA
 # ==========================================================
 
 def get_reference_data(crop_name, area_name):
@@ -257,7 +1183,7 @@ def get_reference_data(crop_name, area_name):
 
 
 # ==========================================================
-# 10. GENERATE CROP INSIGHTS
+# 11. GENERATE CROP INSIGHTS
 # ==========================================================
 
 def generate_crop_insights(
@@ -485,162 +1411,276 @@ def generate_crop_insights(
 
 
 # ==========================================================
-# 11. SIDEBAR NAVIGATION
+# 12. INJECT STYLING & SIDEBAR NAVIGATION
 # ==========================================================
 
-st.sidebar.title("🌾 Crop Yield Prediction")
+inject_custom_css()
 
-st.sidebar.caption(
-    "Machine Learning Based Agricultural Analysis"
-)
+NAV_PAGES = [
+    "🏠 Home",
+    "🔮 Predict Yield",
+    "📊 Data Analysis",
+    "🤖 Model Performance",
+    "ℹ️ About"
+]
 
-st.sidebar.divider()
+if "nav_page" not in st.session_state:
+    st.session_state["nav_page"] = NAV_PAGES[0]
 
-page = st.sidebar.radio(
-    "Navigation",
-    [
-        "🏠 Home",
-        "🔮 Predict Yield",
-        "📊 Data Analysis",
-        "🤖 Model Performance",
-        "ℹ️ About"
-    ]
-)
+with st.sidebar:
+    st.markdown(
+        """
+        <div class="sidebar-brand">
+            <div class="sidebar-brand-row">
+                <div class="sidebar-logo">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 20V9" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round"/>
+                        <path d="M12 13C12 8.5 15.5 5 20 5C20 9.5 16.5 13 12 13Z" fill="#FFFFFF"/>
+                        <path d="M12 16C12 11.5 8.5 8 4 8C4 12.5 7.5 16 12 16Z" fill="#ECFDF5"/>
+                    </svg>
+                </div>
+                <div>
+                    <div class="sidebar-brand-title">Crop Yield Prediction</div>
+                    <div class="sidebar-brand-sub">Machine Learning Based Agricultural Analysis</div>
+                </div>
+            </div>
+        </div>
+        <div class="sidebar-section-label">Workspace Navigation</div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-st.sidebar.divider()
+    page = st.radio(
+        "Navigation",
+        NAV_PAGES,
+        key="nav_page",
+        label_visibility="collapsed",
+    )
 
-st.sidebar.caption("Yield unit: hg/ha")
+    st.markdown(
+        f"""
+        <div class="sidebar-footer-card">
+            <div class="sidebar-footer-title">Yield unit: hg/ha</div>
+            <div class="sidebar-footer-sub">
+                {df["Item"].nunique()} crops • {df["Area"].nunique()} areas • {len(df):,} records
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 # ==========================================================
-# 12. HOME PAGE
+# 13. HOME PAGE
 # ==========================================================
 
 if page == "🏠 Home":
 
-    st.title("🌾 Crop Yield Prediction")
+    hero_svg = """
+    <svg viewBox="0 0 380 235" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Agricultural AI dashboard graphic">
+        <rect x="6" y="6" width="368" height="223" rx="18" fill="rgba(255,255,255,0.08)" stroke="rgba(255,255,255,0.18)" stroke-width="1.5"/>
+        <circle cx="312" cy="54" r="24" fill="rgba(132,204,22,0.22)" stroke="rgba(132,204,22,0.5)" stroke-width="1.5"/>
+        <circle cx="312" cy="54" r="12" fill="#84CC16" opacity="0.75"/>
+        <path d="M8 175 Q 110 132 220 166 T 372 152 L 372 227 L 8 227 Z" fill="rgba(16,185,129,0.28)"/>
+        <path d="M8 194 Q 140 160 250 188 T 372 180 L 372 227 L 8 227 Z" fill="rgba(132,204,22,0.26)"/>
+        <g stroke="#ECFDF5" stroke-width="2.2" stroke-linecap="round">
+            <line x1="66" y1="198" x2="66" y2="128"/>
+            <line x1="106" y1="194" x2="106" y2="112"/>
+            <line x1="146" y1="198" x2="146" y2="132"/>
+        </g>
+        <path d="M66 158 C48 152, 44 138, 60 138 C65 138, 66 148, 66 158 Z" fill="#84CC16"/>
+        <path d="M66 146 C84 140, 88 126, 72 126 C67 126, 66 136, 66 146 Z" fill="#10B981"/>
+        <path d="M106 148 C86 142, 82 126, 100 126 C105 126, 106 138, 106 148 Z" fill="#10B981"/>
+        <path d="M106 134 C126 128, 130 112, 112 112 C107 112, 106 124, 106 134 Z" fill="#84CC16"/>
+        <path d="M146 162 C128 156, 124 142, 140 142 C145 142, 146 152, 146 162 Z" fill="#84CC16"/>
+        <path d="M146 150 C164 144, 168 130, 152 130 C147 130, 146 140, 146 150 Z" fill="#10B981"/>
+        <rect x="192" y="38" width="150" height="94" rx="12" fill="#FFFFFF" stroke="#A7F3D0" stroke-width="1.5"/>
+        <text x="206" y="59" font-family="sans-serif" font-size="10.5" font-weight="700" fill="#14532D">Yield Forecast (hg/ha)</text>
+        <rect x="206" y="100" width="15" height="18" rx="3" fill="#D1FAE5"/>
+        <rect x="227" y="90" width="15" height="28" rx="3" fill="#6EE7B7"/>
+        <rect x="248" y="80" width="15" height="38" rx="3" fill="#10B981"/>
+        <rect x="269" y="70" width="15" height="48" rx="3" fill="#14532D"/>
+        <path d="M212 94 L235 84 L256 75 L277 64 L326 57" fill="none" stroke="#84CC16" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="326" cy="57" r="4.5" fill="#14532D" stroke="#84CC16" stroke-width="2"/>
+    </svg>
+    """
 
-    st.subheader(
-        "Machine Learning Based Crop Yield Prediction System"
+    st.markdown(
+        f"""
+        <div class="hero-gradient-banner">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 28px; align-items: center;">
+                <div>
+                    <div class="hero-kicker">🌾 Smart Agriculture • AI Analytics Platform</div>
+                    <h1 class="hero-title">Crop Yield Prediction</h1>
+                    <div class="hero-subtitle">Machine Learning Based Crop Yield Prediction System</div>
+                    <p class="hero-body">
+                        This application uses Machine Learning to predict crop yield based on agricultural and environmental conditions.
+                    </p>
+                    <p class="hero-body" style="margin-top: 8px;">
+                        It also compares user inputs with historical records to identify possible factors worth investigating.
+                    </p>
+                </div>
+                <div>{hero_svg}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    st.write(
-        """
-        This application uses Machine Learning to predict
-        crop yield based on agricultural and environmental
-        conditions.
+    nav_col1, nav_col2, nav_col3, nav_col4 = st.columns(4)
+    with nav_col1:
+        st.button(
+            "🔮 Predict Yield",
+            type="primary",
+            use_container_width=True,
+            on_click=navigate_to,
+            args=("🔮 Predict Yield",),
+        )
+    with nav_col2:
+        st.button(
+            "📊 Data Analysis",
+            type="secondary",
+            use_container_width=True,
+            on_click=navigate_to,
+            args=("📊 Data Analysis",),
+        )
+    with nav_col3:
+        st.button(
+            "🤖 Model Performance",
+            type="secondary",
+            use_container_width=True,
+            on_click=navigate_to,
+            args=("🤖 Model Performance",),
+        )
+    with nav_col4:
+        st.button(
+            "ℹ️ About",
+            type="secondary",
+            use_container_width=True,
+            on_click=navigate_to,
+            args=("ℹ️ About",),
+        )
 
-        It also compares user inputs with historical records
-        to identify possible factors worth investigating.
-        """
-    )
-
-    st.divider()
+    st.write("")
 
     col1, col2, col3 = st.columns(3)
+    with col1:
+        render_kpi_card("Crops", df["Item"].nunique(), "Supported crop varieties", "🌱", "#10B981")
+    with col2:
+        render_kpi_card("Areas", df["Area"].nunique(), "Countries & geographical regions", "🌍", "#14532D")
+    with col3:
+        render_kpi_card("Records", f"{len(df):,}", "Historical agricultural observations", "📊", "#84CC16")
 
-    col1.metric(
-        "🌱 Crops",
-        df["Item"].nunique()
-    )
+    st.write("")
+    st.markdown('<div class="section-heading">📌 Project Features</div>', unsafe_allow_html=True)
 
-    col2.metric(
-        "🌍 Areas",
-        df["Area"].nunique()
-    )
+    features = [
+        ("🌾", "Crop yield prediction"),
+        ("🌍", "Crop and area selection"),
+        ("🏷️", "Crop-specific yield classification"),
+        ("📈", "Historical yield comparison"),
+        ("🌧️", "Rainfall analysis"),
+        ("🌡️", "Temperature analysis"),
+        ("🤖", "Model performance evaluation"),
+        ("📊", "Prediction-based data analysis"),
+        ("🔍", "Possible reasons for low or high yield"),
+        ("💡", "Suggestions for further investigation"),
+    ]
 
-    col3.metric(
-        "📊 Records",
-        f"{len(df):,}"
-    )
-
-    st.divider()
-
-    st.subheader("📌 Project Features")
+    feat_col1, feat_col2 = st.columns(2)
+    for idx, (feat_icon, feat_label) in enumerate(features):
+        target_col = feat_col1 if idx % 2 == 0 else feat_col2
+        with target_col:
+            st.markdown(
+                f"""
+                <div class="feature-item-card">
+                    <div class="feature-item-icon">{feat_icon}</div>
+                    <div class="feature-item-text">{html.escape(feat_label)}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
     st.markdown(
         """
-        - Crop yield prediction
-        - Crop and area selection
-        - Crop-specific yield classification
-        - Historical yield comparison
-        - Rainfall analysis
-        - Temperature analysis
-        - Model performance evaluation
-        - Prediction-based data analysis
-        - Possible reasons for low or high yield
-        - Suggestions for further investigation
-        """
-    )
-
-    st.info(
-        "Insights are based on historical patterns. "
-        "They do not prove cause and effect."
+        <div class="agri-callout">
+            ℹ️ <strong>Note:</strong> Insights are based on historical patterns. They do not prove cause and effect.
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
 
 # ==========================================================
-# 13. PREDICT YIELD PAGE
+# 14. PREDICT YIELD PAGE
 # ==========================================================
 
 elif page == "🔮 Predict Yield":
 
-    st.title("🔮 Predict Crop Yield")
-
-    st.write(
-        "Enter agricultural information to predict crop yield."
+    render_page_header(
+        "🔮",
+        "Predict Crop Yield",
+        "Enter agricultural information to predict crop yield.",
+        badge="ML Inference • hg/ha",
     )
 
-    st.divider()
+    with st.container(border=True):
+        st.markdown('<div class="section-heading">🌱 Crop Information</div>', unsafe_allow_html=True)
 
-    st.subheader("🌱 Crop Information")
+        st.markdown('<div class="input-group-label">Crop, Location &amp; Timeline</div>', unsafe_allow_html=True)
+        row1_col1, row1_col2, row1_col3 = st.columns(3)
+        with row1_col1:
+            crop = st.selectbox(
+                "Select Crop",
+                crop_options
+            )
+        with row1_col2:
+            area = st.selectbox(
+                "Select Area / Country",
+                area_options
+            )
+        with row1_col3:
+            year = st.number_input(
+                "Year",
+                min_value=1961,
+                max_value=2030,
+                value=2025,
+                step=1
+            )
 
-    crop = st.selectbox(
-        "Select Crop",
-        crop_options
-    )
+        st.markdown('<div class="input-group-label" style="margin-top: 10px;">Climate &amp; Field Conditions</div>', unsafe_allow_html=True)
+        row2_col1, row2_col2, row2_col3 = st.columns(3)
+        with row2_col1:
+            rainfall = st.number_input(
+                "Rainfall (mm/year)",
+                min_value=0.0,
+                value=1200.0,
+                step=10.0
+            )
+        with row2_col2:
+            temperature = st.number_input(
+                "Temperature (°C)",
+                min_value=-10.0,
+                max_value=60.0,
+                value=28.0,
+                step=0.5
+            )
+        with row2_col3:
+            pesticides = st.number_input(
+                "Pesticides (tonnes)",
+                min_value=0.0,
+                value=1000.0,
+                step=100.0
+            )
 
-    area = st.selectbox(
-        "Select Area / Country",
-        area_options
-    )
+        st.write("")
+        predict_clicked = st.button(
+            "🌾 Predict Yield",
+            type="primary",
+            use_container_width=True,
+        )
 
-    year = st.number_input(
-        "Year",
-        min_value=1961,
-        max_value=2030,
-        value=2025,
-        step=1
-    )
-
-    rainfall = st.number_input(
-        "Rainfall (mm/year)",
-        min_value=0.0,
-        value=1200.0,
-        step=10.0
-    )
-
-    temperature = st.number_input(
-        "Temperature (°C)",
-        min_value=-10.0,
-        max_value=60.0,
-        value=28.0,
-        step=0.5
-    )
-
-    pesticides = st.number_input(
-        "Pesticides (tonnes)",
-        min_value=0.0,
-        value=1000.0,
-        step=100.0
-    )
-
-    st.divider()
-
-    if st.button(
-        "🌾 Predict Yield",
-        use_container_width=True
-    ):
+    if predict_clicked:
 
         input_data = pd.DataFrame({
 
@@ -730,205 +1770,208 @@ elif page == "🔮 Predict Yield":
             )
 
             # --------------------------------------------------
-            # PREDICTED YIELD
+            # PREDICTED YIELD & YIELD STATUS CARDS
             # --------------------------------------------------
 
-            st.subheader("🌾 Predicted Crop Yield")
+            status_style = get_status_style(status)
+            res_col1, res_col2 = st.columns([1.15, 1])
 
-            st.metric(
-                "Predicted Yield",
-                f"{predicted_yield:,.2f} hg/ha"
-            )
+            with res_col1:
+                st.markdown(
+                    f"""
+                    <div class="prediction-hero-card">
+                        <div class="prediction-eyebrow">🌾 Predicted Crop Yield</div>
+                        <div class="prediction-number">
+                            {predicted_yield:,.2f} <span class="prediction-unit">hg/ha</span>
+                        </div>
+                        <div class="prediction-pills">
+                            <span class="prediction-pill">🌱 {html.escape(crop)}</span>
+                            <span class="prediction-pill">🌍 {html.escape(area)}</span>
+                            <span class="prediction-pill">📅 {int(year)}</span>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
-            st.divider()
+            with res_col2:
+                tiers_html = ""
+                for tier_name in ["Poor", "Average", "Good", "Excellent"]:
+                    if tier_name == status_style["tier"]:
+                        tiers_html += (
+                            f'<div class="tier-step tier-step-active" '
+                            f'style="background: {status_style["badge_bg"]}; '
+                            f'border-color: {status_style["accent"]}; '
+                            f'color: {status_style["text"]};">{tier_name}</div>'
+                        )
+                    else:
+                        tiers_html += f'<div class="tier-step">{tier_name}</div>'
 
-            # --------------------------------------------------
-            # YIELD STATUS
-            # --------------------------------------------------
-
-            st.subheader("📊 Yield Status")
-
-            col1, col2 = st.columns(2)
-
-            col1.metric(
-                "Yield Category",
-                status
-            )
-
-            col2.metric(
-                f"{crop} Historical Average",
-                f"{thresholds['average']:,.2f} hg/ha"
-            )
-
-            if "Poor" in status:
-
-                st.warning(status_message)
-
-            elif "Average" in status:
-
-                st.info(status_message)
-
-            else:
-
-                st.success(status_message)
+                st.markdown(
+                    f"""
+                    <div class="status-result-card" style="background: {status_style['bg']}; border: 1.5px solid {status_style['border']}; color: {status_style['text']};">
+                        <div class="prediction-eyebrow" style="color: {status_style['text']}; opacity: 0.85;">📊 Yield Status</div>
+                        <div class="status-pill-badge" style="background: {status_style['badge_bg']}; border: 1px solid {status_style['border']}; color: {status_style['text']};">
+                            {html.escape(status)}
+                        </div>
+                        <div class="tier-track">{tiers_html}</div>
+                        <p class="status-message-text">{html.escape(status_message)}</p>
+                        <div class="status-meta-row">
+                            <span><strong>{html.escape(crop)} Historical Average:</strong> {thresholds['average']:,.2f} hg/ha</span>
+                            <span><strong>Records:</strong> {thresholds['count']:,}</span>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
             st.caption(
                 f"Classification uses {thresholds['count']:,} "
                 f"historical records for {crop}."
             )
 
-            st.divider()
-
             # --------------------------------------------------
             # PREDICTION INTERPRETATION
             # --------------------------------------------------
 
-            st.subheader("📌 Prediction Interpretation")
+            with st.container(border=True):
+                st.markdown('<div class="section-heading">📌 Prediction Interpretation</div>', unsafe_allow_html=True)
+                st.write(
+                    f"""
+                    The model predicts **{predicted_yield:,.2f} hg/ha**
+                    for **{crop}** in **{area}** during **{int(year)}**.
 
-            st.write(
-                f"""
-                The model predicts **{predicted_yield:,.2f} hg/ha**
-                for **{crop}** in **{area}** during **{int(year)}**.
-
-                The predicted result is classified as **{status}**
-                based on the historical yield distribution of
-                the selected crop.
-                """
-            )
-
-            st.divider()
+                    The predicted result is classified as **{status}**
+                    based on the historical yield distribution of
+                    the selected crop.
+                    """
+                )
 
             # --------------------------------------------------
-            # CROP YIELD INSIGHTS
+            # CROP YIELD INSIGHTS & RECOMMENDATIONS
             # --------------------------------------------------
 
-            st.header(
-                "🔍 Crop Yield Insights & Recommendations"
+            st.markdown('<div class="section-heading">🔍 Crop Yield Insights &amp; Recommendations</div>', unsafe_allow_html=True)
+            st.markdown(
+                '<div class="section-subtext">This section compares your input values with historical records to identify conditions that may deserve attention.</div>',
+                unsafe_allow_html=True,
             )
-
-            st.write(
-                """
-                This section compares your input values with
-                historical records to identify conditions
-                that may deserve attention.
-                """
-            )
-
             st.caption(
                 f"Comparison basis: {insights['reference_label']} "
                 f"({insights['reference_count']:,} records)."
             )
 
-            st.subheader(
-                "Possible Factors to Investigate"
-            )
-
-            for factor in insights["possible_factors"]:
-
-                st.markdown(f"- {factor}")
-
-            st.subheader(
-                "📈 Historical Input Comparison"
-            )
-
-            if not insights["comparison_table"].empty:
-
-                st.dataframe(
-                    insights["comparison_table"],
-                    use_container_width=True,
-                    hide_index=True
+            ins_col1, ins_col2 = st.columns(2)
+            with ins_col1:
+                render_insight_list_card(
+                    "Possible Factors to Investigate",
+                    insights["possible_factors"],
+                    bullet_icon="🔎",
+                )
+            with ins_col2:
+                render_insight_list_card(
+                    "💡 Recommendations",
+                    insights["recommendations"],
+                    bullet_icon="✅",
                 )
 
-            else:
+            st.write("")
+            with st.container(border=True):
+                st.markdown('<div class="section-heading">📈 Historical Input Comparison</div>', unsafe_allow_html=True)
 
-                st.info(
-                    "Not enough historical information for comparison."
+                if not insights["comparison_table"].empty:
+
+                    st.dataframe(
+                        insights["comparison_table"],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                else:
+
+                    st.info(
+                        "Not enough historical information for comparison."
+                    )
+
+                st.write(insights["yield_context"])
+
+                st.caption(
+                    "These suggestions are based on historical data, "
+                    "not confirmed causes. Soil quality, seeds, irrigation, "
+                    "sowing time, pests and farming methods can also "
+                    "affect crop yield. Pesticide usage alone cannot "
+                    "show whether pest control was effective."
                 )
 
-            st.write(insights["yield_context"])
-
-            st.subheader(
-                "💡 Recommendations"
-            )
-
-            for recommendation in insights["recommendations"]:
-
-                st.markdown(f"- {recommendation}")
-
-            st.caption(
-                "These suggestions are based on historical data, "
-                "not confirmed causes. Soil quality, seeds, irrigation, "
-                "sowing time, pests and farming methods can also "
-                "affect crop yield. Pesticide usage alone cannot "
-                "show whether pest control was effective."
-            )
-
-            st.divider()
-
             # --------------------------------------------------
-            # PREDICTION DETAILS
+            # PREDICTION DETAILS & CLASSIFICATION RANGE
             # --------------------------------------------------
 
-            st.subheader("📋 Prediction Details")
+            det_col1, det_col2 = st.columns([1.15, 1])
 
-            display_data = pd.DataFrame({
+            with det_col1:
+                with st.container(border=True):
+                    st.markdown('<div class="section-heading">📋 Prediction Details</div>', unsafe_allow_html=True)
 
-                "Parameter": [
-                    "Crop",
-                    "Area / Country",
-                    "Year",
-                    "Rainfall",
-                    "Temperature",
-                    "Pesticides",
-                    "Predicted Yield",
-                    "Yield Status"
-                ],
+                    display_data = pd.DataFrame({
 
-                "Value": [
-                    crop,
-                    area,
-                    int(year),
-                    f"{rainfall:,.2f} mm/year",
-                    f"{temperature:.2f} °C",
-                    f"{pesticides:,.2f} tonnes",
-                    f"{predicted_yield:,.2f} hg/ha",
-                    status
-                ]
+                        "Parameter": [
+                            "Crop",
+                            "Area / Country",
+                            "Year",
+                            "Rainfall",
+                            "Temperature",
+                            "Pesticides",
+                            "Predicted Yield",
+                            "Yield Status"
+                        ],
 
-            })
+                        "Value": [
+                            crop,
+                            area,
+                            str(int(year)),
+                            f"{rainfall:,.2f} mm/year",
+                            f"{temperature:.2f} °C",
+                            f"{pesticides:,.2f} tonnes",
+                            f"{predicted_yield:,.2f} hg/ha",
+                            status
+                        ]
 
-            st.dataframe(
-                display_data,
-                use_container_width=True,
-                hide_index=True
-            )
+                    })
 
-            st.divider()
+                    st.dataframe(
+                        display_data,
+                        use_container_width=True,
+                        hide_index=True
+                    )
 
-            # --------------------------------------------------
-            # CROP-SPECIFIC CLASSIFICATION RANGE
-            # --------------------------------------------------
+            with det_col2:
+                with st.container(border=True):
+                    st.markdown('<div class="section-heading">📈 Crop Yield Classification Range</div>', unsafe_allow_html=True)
 
-            st.subheader(
-                "📈 Crop Yield Classification Range"
-            )
-
-            col1, col2, col3 = st.columns(3)
-
-            col1.metric(
-                "Poor (below 25th percentile)",
-                f"< {thresholds['q25']:,.2f} hg/ha"
-            )
-
-            col2.metric(
-                "Median (50th percentile)",
-                f"{thresholds['q50']:,.2f} hg/ha"
-            )
-
-            col3.metric(
-                "Excellent (75th percentile and above)",
-                f"≥ {thresholds['q75']:,.2f} hg/ha"
-            )
+                    st.markdown(
+                        f"""
+                        <div style="display: flex; flex-direction: column; gap: 10px;">
+                            <div style="background: #FEF2F2; border: 1px solid #FECACA; border-radius: 10px; padding: 12px 14px;">
+                                <div style="font-size: 0.8rem; font-weight: 600; color: #991B1B;">🔴 Poor — Below 25th percentile</div>
+                                <div style="font-size: 1.25rem; font-weight: 800; color: #991B1B; margin-top: 2px;">&lt; {thresholds['q25']:,.2f} hg/ha</div>
+                            </div>
+                            <div style="background: #FFF7ED; border: 1px solid #FED7AA; border-radius: 10px; padding: 12px 14px;">
+                                <div style="font-size: 0.8rem; font-weight: 600; color: #9A3412;">🟠 Average — 25th to 50th percentile</div>
+                                <div style="font-size: 1.25rem; font-weight: 800; color: #9A3412; margin-top: 2px;">{thresholds['q25']:,.2f} – {thresholds['q50']:,.2f} hg/ha</div>
+                            </div>
+                            <div style="background: #FEFCE8; border: 1px solid #FDE047; border-radius: 10px; padding: 12px 14px;">
+                                <div style="font-size: 0.8rem; font-weight: 600; color: #854D0E;">🟡 Good — 50th to 75th percentile</div>
+                                <div style="font-size: 1.25rem; font-weight: 800; color: #854D0E; margin-top: 2px;">{thresholds['q50']:,.2f} – {thresholds['q75']:,.2f} hg/ha</div>
+                            </div>
+                            <div style="background: #ECFDF5; border: 1px solid #6EE7B7; border-radius: 10px; padding: 12px 14px;">
+                                <div style="font-size: 0.8rem; font-weight: 600; color: #14532D;">🟢 Excellent — 75th percentile and above</div>
+                                <div style="font-size: 1.25rem; font-weight: 800; color: #14532D; margin-top: 2px;">≥ {thresholds['q75']:,.2f} hg/ha</div>
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
         except Exception as error:
 
@@ -938,36 +1981,46 @@ elif page == "🔮 Predict Yield":
 
 
 # ==========================================================
-# 14. DATA ANALYSIS PAGE
+# 15. DATA ANALYSIS PAGE
 #     BASED ONLY ON THE LATEST PREDICTION
 # ==========================================================
 
 elif page == "📊 Data Analysis":
 
-    st.title("📊 Prediction Analysis")
-
-    st.write(
-        """
-        Understand your predicted crop yield through
-        historical comparisons and simple explanations.
-        """
+    render_page_header(
+        "📊",
+        "Prediction Analysis",
+        "Understand your predicted crop yield through historical comparisons and simple explanations.",
+        badge="Latest Prediction Insights",
     )
-
-    st.divider()
 
     # CHECK WHETHER A PREDICTION EXISTS
 
     if "last_prediction" not in st.session_state:
 
-        st.info(
+        st.markdown(
             """
-            No prediction is available yet.
-
-            Please visit the Predict Yield page and generate
-            a crop yield prediction first. Your prediction
-            analysis will appear here.
-            """
+            <div class="empty-state-card">
+                <div class="empty-state-icon">🌱</div>
+                <div class="empty-state-title">No prediction is available yet.</div>
+                <div class="empty-state-text">
+                    Please visit the Predict Yield page and generate
+                    a crop yield prediction first. Your prediction
+                    analysis will appear here.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
+        _, btn_center, _ = st.columns([1.2, 1, 1.2])
+        with btn_center:
+            st.button(
+                "🔮 Go to Predict Yield",
+                type="primary",
+                use_container_width=True,
+                on_click=navigate_to,
+                args=("🔮 Predict Yield",),
+            )
 
     else:
 
@@ -985,139 +2038,171 @@ elif page == "📊 Data Analysis":
 
         insights = result["insights"]
 
+        status_style = get_status_style(status)
+
         # --------------------------------------------------
         # 1. PREDICTION SUMMARY
         # --------------------------------------------------
 
-        st.subheader("🌾 Your Prediction Summary")
+        st.markdown('<div class="section-heading">🌾 Your Prediction Summary</div>', unsafe_allow_html=True)
 
-        col1, col2, col3 = st.columns(3)
-
-        col1.metric(
-            "Selected Crop",
-            crop
-        )
-
-        col2.metric(
-            "Selected Area",
-            area
-        )
-
-        col3.metric(
-            "Predicted Yield",
-            f"{predicted_yield:,.2f} hg/ha"
-        )
-
-        st.write(
-            f"**Prediction Year:** {year}"
-        )
-
-        if "Poor" in status:
-
-            st.warning(
-                f"Predicted Result: {status}"
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            render_kpi_card("Selected Crop", crop, "Target crop", "🌱", "#10B981")
+        with col2:
+            render_kpi_card("Selected Area", area, "Country / region", "🌍", "#14532D")
+        with col3:
+            render_kpi_card("Predicted Yield", f"{predicted_yield:,.2f} hg/ha", f"Prediction Year: {year}", "🌾", "#84CC16")
+        with col4:
+            st.markdown(
+                f"""
+                <div class="kpi-card" style="background: {status_style['bg']}; border-color: {status_style['border']}; border-top: 3px solid {status_style['accent']};">
+                    <div class="kpi-label" style="color: {status_style['text']};">Predicted Result</div>
+                    <div class="kpi-value" style="font-size: 1.4rem; color: {status_style['text']};">{html.escape(status)}</div>
+                    <div class="kpi-sub" style="color: {status_style['text']};">Crop-specific tier</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
-        elif "Average" in status:
-
-            st.info(
-                f"Predicted Result: {status}"
-            )
-
-        else:
-
-            st.success(
-                f"Predicted Result: {status}"
-            )
-
-        st.divider()
+        st.write("")
 
         # --------------------------------------------------
         # 2. HISTORICAL YIELD COMPARISON
         # --------------------------------------------------
 
-        st.subheader(
-            "📈 How Does Your Prediction Compare?"
-        )
+        with st.container(border=True):
+            st.markdown('<div class="section-heading">📈 How Does Your Prediction Compare?</div>', unsafe_allow_html=True)
 
-        st.write(
-            f"""
-            The chart below compares your predicted yield
-            for **{crop}** with the historical yield levels
-            of the same crop.
-            """
-        )
+            st.write(
+                f"""
+                The chart below compares your predicted yield
+                for **{crop}** with the historical yield levels
+                of the same crop.
+                """
+            )
 
-        comparison = pd.DataFrame({
+            comparison = pd.DataFrame({
 
-            "Yield Level": [
+                "Yield Level": [
+                    "Lower historical level",
+                    "Historical median",
+                    "Historical average",
+                    "Upper historical level",
+                    "Your prediction"
+                ],
+
+                "Yield (hg/ha)": [
+                    thresholds["q25"],
+                    thresholds["q50"],
+                    thresholds["average"],
+                    thresholds["q75"],
+                    predicted_yield
+                ]
+
+            })
+
+            comparison["Category"] = comparison["Yield Level"].apply(
+                lambda x: "Your Prediction" if x == "Your prediction" else "Historical Benchmark"
+            )
+
+            yield_order = [
                 "Lower historical level",
                 "Historical median",
                 "Historical average",
                 "Upper historical level",
-                "Your prediction"
-            ],
-
-            "Yield (hg/ha)": [
-                thresholds["q25"],
-                thresholds["q50"],
-                thresholds["average"],
-                thresholds["q75"],
-                predicted_yield
+                "Your prediction",
             ]
 
-        })
-
-        st.bar_chart(
-            comparison.set_index("Yield Level")
-        )
-
-        average = thresholds["average"]
-
-        difference = predicted_yield - average
-
-        if difference > 0:
-
-            st.success(
-                f"Your predicted yield is {difference:,.2f} hg/ha "
-                f"higher than the historical average for {crop}."
+            bars = (
+                alt.Chart(comparison)
+                .mark_bar(cornerRadiusEnd=6, size=32)
+                .encode(
+                    y=alt.Y(
+                        "Yield Level:N",
+                        sort=yield_order,
+                        title=None,
+                        axis=alt.Axis(labelLimit=200, labelFontSize=12, labelColor="#1F2937"),
+                    ),
+                    x=alt.X(
+                        "Yield (hg/ha):Q",
+                        title="Yield (hg/ha)",
+                        axis=alt.Axis(format=",.0f", labelColor="#6B7280", titleColor="#1F2937", gridColor="#EEF2EC"),
+                    ),
+                    color=alt.Color(
+                        "Category:N",
+                        scale=alt.Scale(
+                            domain=["Historical Benchmark", "Your Prediction"],
+                            range=["#6EE7B7", "#14532D"],
+                        ),
+                        legend=alt.Legend(title=None, orient="top"),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("Yield Level:N", title="Level"),
+                        alt.Tooltip("Yield (hg/ha):Q", title="Yield (hg/ha)", format=",.2f"),
+                    ],
+                )
             )
 
-        elif difference < 0:
-
-            st.warning(
-                f"Your predicted yield is {abs(difference):,.2f} "
-                f"hg/ha lower than the historical average for {crop}."
+            labels = (
+                alt.Chart(comparison)
+                .mark_text(align="left", baseline="middle", dx=6, fontSize=12, fontWeight="bold", color="#1F2937")
+                .encode(
+                    y=alt.Y("Yield Level:N", sort=yield_order),
+                    x=alt.X("Yield (hg/ha):Q"),
+                    text=alt.Text("Yield (hg/ha):Q", format=",.2f"),
+                )
             )
 
-        else:
-
-            st.info(
-                "Your predicted yield is equal to the historical average."
+            max_yield_val = max(comparison["Yield (hg/ha)"].max(), 1.0)
+            yield_chart = (
+                (bars + labels)
+                .properties(height=275)
+                .encode(x=alt.X("Yield (hg/ha):Q", scale=alt.Scale(domain=[0, max_yield_val * 1.18])))
+                .configure_view(strokeWidth=0)
             )
 
-        st.caption(
-            f"Historical comparison uses "
-            f"{thresholds['count']:,} records for {crop}."
-        )
+            st.altair_chart(yield_chart, use_container_width=True)
 
-        st.divider()
+            average = thresholds["average"]
+
+            difference = predicted_yield - average
+
+            if difference > 0:
+
+                st.success(
+                    f"Your predicted yield is {difference:,.2f} hg/ha "
+                    f"higher than the historical average for {crop}."
+                )
+
+            elif difference < 0:
+
+                st.warning(
+                    f"Your predicted yield is {abs(difference):,.2f} "
+                    f"hg/ha lower than the historical average for {crop}."
+                )
+
+            else:
+
+                st.info(
+                    "Your predicted yield is equal to the historical average."
+                )
+
+            st.caption(
+                f"Historical comparison uses "
+                f"{thresholds['count']:,} records for {crop}."
+            )
+
+        st.write("")
 
         # --------------------------------------------------
         # 3. INPUT CONDITION ANALYSIS
         # --------------------------------------------------
 
-        st.subheader(
-            "🌦️ Analysis of Your Input Conditions"
-        )
-
-        st.write(
-            """
-            The following section checks whether your rainfall,
-            temperature and pesticide values are within the
-            usual historical ranges for the selected crop
-            and area, where enough records are available.
-            """
+        st.markdown('<div class="section-heading">🌦️ Analysis of Your Input Conditions</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="section-subtext">The following section checks whether your rainfall, temperature and pesticide values are within the usual historical ranges for the selected crop and area, where enough records are available.</div>',
+            unsafe_allow_html=True,
         )
 
         reference, reference_label = get_reference_data(
@@ -1150,7 +2235,9 @@ elif page == "📊 Data Analysis":
 
         ]
 
-        for name, user_value, column, unit in input_details:
+        cond_cols = st.columns(3)
+
+        for idx, (name, user_value, column, unit) in enumerate(input_details):
 
             historical = pd.to_numeric(
                 reference[column],
@@ -1161,111 +2248,149 @@ elif page == "📊 Data Analysis":
                 continue
 
             q25 = historical.quantile(0.25)
+            median_val = historical.median()
             q75 = historical.quantile(0.75)
 
-            st.markdown(f"**{name}**")
+            with cond_cols[idx % 3]:
+                with st.container(border=True):
+                    st.markdown(f"**{name}**")
 
-            col1, col2 = st.columns(2)
+                    m1, m2 = st.columns(2)
+                    m1.metric(
+                        "Your Input",
+                        f"{user_value:,.2f} {unit}"
+                    )
+                    m2.metric(
+                        "Usual Historical Range",
+                        f"{q25:,.2f} – {q75:,.2f} {unit}"
+                    )
 
-            col1.metric(
-                "Your Input",
-                f"{user_value:,.2f} {unit}"
-            )
+                    range_min = min(float(historical.min()), float(user_value), float(q25))
+                    range_max = max(float(historical.max()), float(user_value), float(q75))
+                    if range_max == range_min:
+                        range_max = range_min + 1.0
 
-            col2.metric(
-                "Usual Historical Range",
-                f"{q25:,.2f} – {q75:,.2f} {unit}"
-            )
+                    band_df = pd.DataFrame({
+                        "label": ["Range"],
+                        "q25": [float(q25)],
+                        "q75": [float(q75)],
+                        "median": [float(median_val)],
+                        "user": [float(user_value)],
+                    })
 
-            if user_value < q25:
+                    base_band = alt.Chart(band_df).encode(y=alt.Y("label:N", axis=None))
 
-                st.warning(
-                    f"{name} is lower than the usual "
-                    "historical range."
-                )
+                    iqr_bar = base_band.mark_bar(height=14, cornerRadius=4, color="#D1FAE5", stroke="#10B981", strokeWidth=1).encode(
+                        x=alt.X(
+                            "q25:Q",
+                            title=unit,
+                            scale=alt.Scale(domain=[range_min * 0.95 if range_min > 0 else range_min, range_max * 1.05]),
+                            axis=alt.Axis(labelColor="#6B7280", titleColor="#6B7280", tickCount=4),
+                        ),
+                        x2="q75:Q",
+                        tooltip=[
+                            alt.Tooltip("q25:Q", title="Lower (25th %)", format=",.2f"),
+                            alt.Tooltip("median:Q", title="Median", format=",.2f"),
+                            alt.Tooltip("q75:Q", title="Upper (75th %)", format=",.2f"),
+                        ],
+                    )
 
-            elif user_value > q75:
+                    median_tick = base_band.mark_tick(color="#10B981", thickness=2.5, size=20).encode(
+                        x="median:Q",
+                        tooltip=[alt.Tooltip("median:Q", title="Historical Median", format=",.2f")],
+                    )
 
-                st.warning(
-                    f"{name} is higher than the usual "
-                    "historical range."
-                )
+                    user_point = base_band.mark_point(filled=True, size=140, color="#14532D", shape="diamond").encode(
+                        x="user:Q",
+                        tooltip=[alt.Tooltip("user:Q", title="Your Input", format=",.2f")],
+                    )
 
-            else:
+                    range_chart = (
+                        (iqr_bar + median_tick + user_point)
+                        .properties(height=68)
+                        .configure_view(strokeWidth=0)
+                    )
 
-                st.success(
-                    f"{name} is within the usual "
-                    "historical range."
-                )
+                    st.altair_chart(range_chart, use_container_width=True)
 
-            st.divider()
+                    if user_value < q25:
+
+                        st.warning(
+                            f"{name} is lower than the usual "
+                            "historical range."
+                        )
+
+                    elif user_value > q75:
+
+                        st.warning(
+                            f"{name} is higher than the usual "
+                            "historical range."
+                        )
+
+                    else:
+
+                        st.success(
+                            f"{name} is within the usual "
+                            "historical range."
+                        )
 
         st.caption(
             f"Historical comparison: {reference_label} "
             f"({len(reference):,} records)."
         )
 
-        # --------------------------------------------------
-        # 4. POSSIBLE FACTORS
-        # --------------------------------------------------
-
-        st.subheader(
-            "🔍 What May Need Attention?"
-        )
-
-        for factor in insights["possible_factors"]:
-
-            st.markdown(f"- {factor}")
-
-        st.divider()
+        st.write("")
 
         # --------------------------------------------------
-        # 5. SUGGESTIONS
+        # 4. POSSIBLE FACTORS & 5. SUGGESTIONS
         # --------------------------------------------------
 
-        st.subheader(
-            "💡 Suggestions"
-        )
+        fac_col1, fac_col2 = st.columns(2)
+        with fac_col1:
+            render_insight_list_card(
+                "🔍 What May Need Attention?",
+                insights["possible_factors"],
+                bullet_icon="🔎",
+            )
+        with fac_col2:
+            render_insight_list_card(
+                "💡 Suggestions",
+                insights["recommendations"],
+                bullet_icon="✅",
+            )
 
-        for recommendation in insights["recommendations"]:
-
-            st.markdown(f"- {recommendation}")
-
-        st.divider()
+        st.write("")
 
         # --------------------------------------------------
         # 6. OVERALL PREDICTION EXPLANATION
         # --------------------------------------------------
 
-        st.subheader(
-            "📝 Overall Prediction Explanation"
-        )
+        with st.container(border=True):
+            st.markdown('<div class="section-heading">📝 Overall Prediction Explanation</div>', unsafe_allow_html=True)
 
-        st.write(
-            f"""
-            For **{crop}** in **{area}** during **{year}**,
-            the model predicts a yield of
-            **{predicted_yield:,.2f} hg/ha**.
+            st.write(
+                f"""
+                For **{crop}** in **{area}** during **{year}**,
+                the model predicts a yield of
+                **{predicted_yield:,.2f} hg/ha**.
 
-            The predicted result is classified as **{status}**
-            when compared with the historical yield levels
-            of the selected crop.
+                The predicted result is classified as **{status}**
+                when compared with the historical yield levels
+                of the selected crop.
 
-            The input analysis identifies conditions that
-            may deserve further attention.
-            """
-        )
+                The input analysis identifies conditions that
+                may deserve further attention.
+                """
+            )
 
-        st.caption(
-            "These comparisons show historical patterns, "
-            "not confirmed causes of crop yield. Actual yield "
-            "can also depend on soil quality, seeds, irrigation, "
-            "sowing time, pests and farming methods. "
-            "The model does not identify the exact cause "
-            "of a predicted result."
-        )
-
-        st.divider()
+            st.caption(
+                "These comparisons show historical patterns, "
+                "not confirmed causes of crop yield. Actual yield "
+                "can also depend on soil quality, seeds, irrigation, "
+                "sowing time, pests and farming methods. "
+                "The model does not identify the exact cause "
+                "of a predicted result."
+            )
 
         # --------------------------------------------------
         # 7. VIEW PREDICTION INPUTS
@@ -1289,7 +2414,7 @@ elif page == "📊 Data Analysis":
                 "Value": [
                     crop,
                     area,
-                    year,
+                    str(year),
                     f"{result['rainfall']:,.2f} mm/year",
                     f"{result['temperature']:.2f} °C",
                     f"{result['pesticides']:,.2f} tonnes",
@@ -1307,24 +2432,22 @@ elif page == "📊 Data Analysis":
 
 
 # ==========================================================
-# 15. MODEL PERFORMANCE PAGE
+# 16. MODEL PERFORMANCE PAGE
 # ==========================================================
 
 elif page == "🤖 Model Performance":
 
-    st.title("🤖 Model Performance")
-
-    st.write(
-        "Compare the performance of different Machine Learning "
-        "models used for crop yield prediction."
+    render_page_header(
+        "🤖",
+        "Model Performance",
+        "Compare the performance of different Machine Learning models used for crop yield prediction.",
+        badge="4-Model Evaluation",
     )
 
     st.info(
-        "This page trains the comparison models when opened. "
-        "It may take some time."
+        "Model comparison metrics are computed once and cached. "
+        "They reflect a fixed 80/20 train-test split with random_state=42."
     )
-
-    st.divider()
 
     # FEATURES AND TARGET
 
@@ -1355,37 +2478,37 @@ elif page == "🤖 Model Performance":
         random_state=42
     )
 
-    # MODELS
+    @st.cache_data(show_spinner=False)
+    def compute_model_results(_X_train, _X_test, _y_train, _y_test):
+        """Train all four comparison models and return metrics. Cached after first run."""
 
-    models = {
+        _models = {
 
-        "Linear Regression":
-            LinearRegression(),
+            "Linear Regression":
+                LinearRegression(),
 
-        "Decision Tree":
-            DecisionTreeRegressor(
-                random_state=42
-            ),
+            "Decision Tree":
+                DecisionTreeRegressor(
+                    random_state=42
+                ),
 
-        "Random Forest":
-            RandomForestRegressor(
-                n_estimators=100,
-                random_state=42,
-                n_jobs=-1
-            ),
+            "Random Forest":
+                RandomForestRegressor(
+                    n_estimators=100,
+                    random_state=42,
+                    n_jobs=-1
+                ),
 
-        "Gradient Boosting":
-            GradientBoostingRegressor(
-                random_state=42
-            )
+            "Gradient Boosting":
+                GradientBoostingRegressor(
+                    random_state=42
+                )
 
-    }
+        }
 
-    results = []
+        _results = []
 
-    with st.spinner("Training and evaluating models..."):
-
-        for name, algorithm in models.items():
+        for name, algorithm in _models.items():
 
             preprocessor = ColumnTransformer(
 
@@ -1421,38 +2544,49 @@ elif page == "🤖 Model Performance":
             ])
 
             pipeline.fit(
-                X_train,
-                y_train
+                _X_train,
+                _y_train
             )
 
             predictions = pipeline.predict(
-                X_test
+                _X_test
             )
 
-            results.append({
+            _results.append({
 
                 "Model": name,
 
                 "R²": r2_score(
-                    y_test,
+                    _y_test,
                     predictions
                 ),
 
                 "RMSE": np.sqrt(
                     mean_squared_error(
-                        y_test,
+                        _y_test,
                         predictions
                     )
                 ),
 
                 "MAE": mean_absolute_error(
-                    y_test,
+                    _y_test,
                     predictions
                 )
 
             })
 
-    results_df = pd.DataFrame(results)
+        return pd.DataFrame(_results)
+
+    with st.spinner("Training and evaluating models (first visit only)..."):
+        results_df = compute_model_results(X_train, X_test, y_train, y_test)
+
+    # MODEL ORDER FOR CHART SORTING
+    model_order = [
+        "Linear Regression",
+        "Decision Tree",
+        "Random Forest",
+        "Gradient Boosting",
+    ]
 
     # BEST MODEL
 
@@ -1460,79 +2594,404 @@ elif page == "🤖 Model Performance":
         results_df["R²"].idxmax()
     ]
 
-    st.subheader(
-        "🏆 Best Model on This Test Split"
-    )
+    st.markdown('<div class="section-heading">🏆 Best Model on This Test Split</div>', unsafe_allow_html=True)
 
     st.success(
         f"Best Model: {best_row['Model']}"
     )
 
     col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        render_kpi_card("Best Model", best_row["Model"], "Highest R² score", "🏆", "#14532D")
+    with col2:
+        render_kpi_card("R² Score", f"{best_row['R²']:.4f}", "Explained variance", "📈", "#10B981")
+    with col3:
+        render_kpi_card("RMSE", f"{best_row['RMSE']:,.2f}", "Root Mean Squared Error", "📉", "#84CC16")
+    with col4:
+        render_kpi_card("MAE", f"{best_row['MAE']:,.2f}", "Mean Absolute Error", "📏", "#10B981")
 
-    col1.metric(
-        "Best Model",
-        best_row["Model"]
+    st.write("")
+    st.markdown('<div class="section-heading">🧩 Model Comparison Cards</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-subtext">Each card summarises one model\'s performance. '
+        'R² closer to 1.00 is better. Lower MAE and RMSE mean smaller prediction errors.</div>',
+        unsafe_allow_html=True,
     )
 
-    col2.metric(
-        "R² Score",
-        f"{best_row['R²']:.4f}"
+    # ── derive per-model metadata from actual results ──────────────────────────
+
+    # Rank by R² descending (1 = best)
+    _ranked = results_df.sort_values("R²", ascending=False).reset_index(drop=True)
+    _rank_map   = {row["Model"]: idx + 1 for idx, row in _ranked.iterrows()}
+    _best_rmse  = results_df["RMSE"].min()
+    _best_mae   = results_df["MAE"].min()
+    _best_r2    = results_df["R²"].max()
+
+    # Model icons
+    _model_icons = {
+        "Linear Regression":   "📐",
+        "Decision Tree":       "🌳",
+        "Random Forest":       "🌲",
+        "Gradient Boosting":   "⚡",
+    }
+
+    # Model plain-English descriptions
+    _model_desc = {
+        "Linear Regression":
+            "Fits a straight line through the data. Fast and simple, "
+            "but limited when relationships are non-linear.",
+        "Decision Tree":
+            "Splits data into branches using decision rules. "
+            "Easy to interpret but can overfit on complex data.",
+        "Random Forest":
+            "Combines many decision trees and averages their results. "
+            "Robust and accurate across varied conditions.",
+        "Gradient Boosting":
+            "Builds trees sequentially, each correcting the previous. "
+            "Often the most accurate but slower to train.",
+    }
+
+    def _perf_status(rank, r2):
+        if rank == 1:
+            return ("🏆 Best Performer",  "#14532D", "#D1FAE5", "#10B981")
+        elif r2 >= _best_r2 * 0.92:
+            return ("✅ Good Performance", "#166534", "#ECFDF5", "#10B981")
+        else:
+            return ("⚠️ Needs Improvement", "#92400E", "#FFFBEB", "#F59E0B")
+
+    # ── render 2 × 2 grid ─────────────────────────────────────────────────────
+
+    _rows = [
+        list(results_df.iloc[0:2].iterrows()),
+        list(results_df.iloc[2:4].iterrows()),
+    ]
+
+    for _row_pair in _rows:
+        _grid_cols = st.columns(2, gap="medium")
+        for _gcol, (_, _r) in zip(_grid_cols, _row_pair):
+            _is_best   = _r["Model"] == best_row["Model"]
+            _rank      = _rank_map[_r["Model"]]
+            _icon      = _model_icons.get(_r["Model"], "🤖")
+            _desc      = _model_desc.get(_r["Model"], "")
+            _slabel, _stext, _sbg, _sborder = _perf_status(_rank, _r["R²"])
+
+            # R² fill bar — clamp between 0 and 100 %
+            _r2_pct    = max(0.0, min(1.0, float(_r["R²"]))) * 100
+
+            # Colour for fill bar segments
+            _bar_color = "#10B981" if _is_best else "#6EE7B7"
+
+            # Error indicator arrows
+            _rmse_ind  = ('<span style="color:#10B981;font-weight:700;">▼ lowest</span>'
+                          if abs(float(_r["RMSE"]) - _best_rmse) < 0.01
+                          else '<span style="color:#9CA3AF;">—</span>')
+            _mae_ind   = ('<span style="color:#10B981;font-weight:700;">▼ lowest</span>'
+                          if abs(float(_r["MAE"]) - _best_mae) < 0.01
+                          else '<span style="color:#9CA3AF;">—</span>')
+
+            # Outer card style
+            if _is_best:
+                _card_style = (
+                    "background:linear-gradient(160deg,#ECFDF5 0%,#FFFFFF 55%);"
+                    "border:2px solid #10B981;"
+                    "border-radius:16px;"
+                    "padding:22px 24px;"
+                    "box-shadow:0 6px 24px rgba(16,185,129,0.14);"
+                    "height:100%;"
+                )
+            else:
+                _card_style = (
+                    "background:#FFFFFF;"
+                    "border:1px solid #E5E7EB;"
+                    "border-radius:16px;"
+                    "padding:22px 24px;"
+                    "box-shadow:0 1px 4px rgba(17,24,39,0.05);"
+                    "height:100%;"
+                )
+
+            with _gcol:
+                st.markdown(
+                    f"""
+                    <div style="{_card_style}">
+                      <div style="display:flex;align-items:flex-start;
+                                  justify-content:space-between;gap:10px;
+                                  margin-bottom:14px;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                          <div style="width:42px;height:42px;border-radius:11px;
+                                      background:{'#D1FAE5' if _is_best else '#F3F4F6'};
+                                      border:1px solid {'#A7F3D0' if _is_best else '#E5E7EB'};
+                                      display:flex;align-items:center;
+                                      justify-content:center;font-size:1.3rem;
+                                      flex-shrink:0;">{_icon}</div>
+                          <div>
+                            <div style="font-family:'Plus Jakarta Sans',sans-serif;
+                                        font-size:1.05rem;font-weight:800;
+                                        color:#14532D;line-height:1.2;">
+                              {html.escape(_r['Model'])}
+                            </div>
+                            <div style="font-size:0.76rem;color:#6B7280;
+                                        margin-top:2px;">Rank #{_rank} of 4</div>
+                          </div>
+                        </div>
+                        <div style="background:{_sbg};border:1px solid {_sborder};
+                                    border-radius:999px;padding:4px 11px;
+                                    font-size:0.73rem;font-weight:700;
+                                    color:{_stext};white-space:nowrap;
+                                    flex-shrink:0;">
+                          {_slabel}
+                        </div>
+                      </div>
+                      <div style="margin-bottom:16px;">
+                        <div style="display:flex;justify-content:space-between;
+                                    align-items:baseline;margin-bottom:5px;">
+                          <span style="font-size:0.78rem;font-weight:600;color:#6B7280;">
+                            R&#178; Score
+                            <span style="font-size:0.72rem;font-weight:400;">
+                              (higher = better)
+                            </span>
+                          </span>
+                          <span style="font-family:'Plus Jakarta Sans',sans-serif;
+                                       font-size:1.3rem;font-weight:800;
+                                       color:{'#14532D' if _is_best else '#1F2937'};">
+                            {float(_r['R\u00b2']):.4f}
+                          </span>
+                        </div>
+                        <div style="background:#E5E7EB;border-radius:999px;
+                                    height:8px;overflow:hidden;">
+                          <div style="width:{_r2_pct:.1f}%;height:100%;
+                                      background:{'linear-gradient(90deg,#10B981,#84CC16)' if _is_best else _bar_color};
+                                      border-radius:999px;">
+                          </div>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;
+                                    font-size:0.69rem;color:#9CA3AF;margin-top:3px;">
+                          <span>0.00</span><span>0.50</span><span>1.00</span>
+                        </div>
+                      </div>
+                      <div style="border-top:1px solid #F3F4F6;padding-top:12px;">
+                        <div style="display:flex;align-items:center;
+                                    justify-content:space-between;margin-bottom:8px;">
+                          <div>
+                            <div style="font-size:0.78rem;font-weight:600;
+                                        color:#6B7280;">MAE</div>
+                            <div style="font-size:0.68rem;color:#9CA3AF;
+                                        margin-top:1px;">Avg error (lower = better)</div>
+                          </div>
+                          <div style="text-align:right;">
+                            <div style="font-size:1.05rem;font-weight:700;color:#1F2937;">
+                              {float(_r['MAE']):,.2f}
+                              <span style="font-size:0.72rem;font-weight:400;
+                                           color:#9CA3AF;">hg/ha</span>
+                            </div>
+                            <div style="font-size:0.72rem;margin-top:1px;">{_mae_ind}</div>
+                          </div>
+                        </div>
+                        <div style="display:flex;align-items:center;
+                                    justify-content:space-between;">
+                          <div>
+                            <div style="font-size:0.78rem;font-weight:600;
+                                        color:#6B7280;">RMSE</div>
+                            <div style="font-size:0.68rem;color:#9CA3AF;
+                                        margin-top:1px;">Penalises large errors more</div>
+                          </div>
+                          <div style="text-align:right;">
+                            <div style="font-size:1.05rem;font-weight:700;color:#1F2937;">
+                              {float(_r['RMSE']):,.2f}
+                              <span style="font-size:0.72rem;font-weight:400;
+                                           color:#9CA3AF;">hg/ha</span>
+                            </div>
+                            <div style="font-size:0.72rem;margin-top:1px;">{_rmse_ind}</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div style="margin-top:14px;padding:10px 12px;
+                                  background:{'#F0FDF4' if _is_best else '#F9FAFB'};
+                                  border-radius:9px;
+                                  border:1px solid {'#A7F3D0' if _is_best else '#E5E7EB'};
+                                  font-size:0.82rem;color:#4B5563;line-height:1.5;">
+                        {html.escape(_desc)}
+                      </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        st.write("")     # vertical gap between the two rows
+
+    # ── Dynamic interpretation paragraph ──────────────────────────────────────
+
+    _second_best = _ranked.iloc[1]
+    _r2_gap      = float(best_row["R²"]) - float(_second_best["R²"])
+    _rmse_gap    = float(_second_best["RMSE"]) - float(best_row["RMSE"])
+
+    _gap_desc = (
+        f"its R² score is {_r2_gap:.4f} higher"
+        if _r2_gap >= 0.001
+        else "its R² score is nearly identical to the next best model"
+    )
+    _error_desc = (
+        f"and its RMSE is {_rmse_gap:,.0f} hg/ha lower"
+        if _rmse_gap > 0
+        else "with comparable error levels"
     )
 
-    col3.metric(
-        "RMSE",
-        f"{best_row['RMSE']:,.2f}"
+    st.markdown(
+        f"""
+        <div style="background:#ECFDF5;border:1px solid #A7F3D0;
+                    border-left:4px solid #10B981;border-radius:12px;
+                    padding:16px 20px;margin-top:4px;">
+          <div style="font-family:'Plus Jakarta Sans',sans-serif;
+                      font-size:0.95rem;font-weight:700;color:#14532D;
+                      margin-bottom:6px;">
+            🏆 Performance Summary
+          </div>
+          <div style="font-size:0.91rem;color:#1F2937;line-height:1.65;">
+            <strong>{html.escape(str(best_row['Model']))}</strong> is the best-performing
+            model on this evaluation split.
+            Compared with <strong>{html.escape(str(_second_best['Model']))}</strong>
+            (the next-closest model), {_gap_desc} {_error_desc}.
+            A higher R² means the model explains more of the variation in crop yield.
+            Lower MAE and RMSE mean its predictions stay closer to the actual values.
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    col4.metric(
-        "MAE",
-        f"{best_row['MAE']:,.2f}"
-    )
-
-    st.divider()
+    st.write("")
 
     # MODEL COMPARISON TABLE
 
-    st.subheader("📊 Model Comparison")
+    with st.container(border=True):
+        st.markdown('<div class="section-heading">📊 Model Comparison</div>', unsafe_allow_html=True)
 
-    formatted_results = results_df.copy()
+        formatted_results = results_df.copy()
 
-    formatted_results["R²"] = (
-        formatted_results["R²"].round(4)
-    )
+        formatted_results["R²"] = (
+            formatted_results["R²"].round(4)
+        )
 
-    formatted_results["RMSE"] = (
-        formatted_results["RMSE"].round(2)
-    )
+        formatted_results["RMSE"] = (
+            formatted_results["RMSE"].round(2)
+        )
 
-    formatted_results["MAE"] = (
-        formatted_results["MAE"].round(2)
-    )
+        formatted_results["MAE"] = (
+            formatted_results["MAE"].round(2)
+        )
 
-    st.dataframe(
-        formatted_results,
-        use_container_width=True,
-        hide_index=True
-    )
+        st.dataframe(
+            formatted_results,
+            use_container_width=True,
+            hide_index=True
+        )
 
-    st.divider()
+    st.write("")
+
+    chart_col1, chart_col2 = st.columns(2)
 
     # R2 CHART
+    with chart_col1:
+        with st.container(border=True):
+            st.markdown('<div class="section-heading">📈 R² Score Comparison</div>', unsafe_allow_html=True)
 
-    st.subheader("📈 R² Score Comparison")
+            r2_df = results_df[["Model", "R²"]].copy()
+            r2_df["Is Best"] = r2_df["Model"].apply(
+                lambda m: "Best Model" if m == best_row["Model"] else "Other Models"
+            )
 
-    st.bar_chart(
-        results_df.set_index("Model")[["R²"]]
-    )
+            r2_bars = (
+                alt.Chart(r2_df)
+                .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6, size=44)
+                .encode(
+                    x=alt.X(
+                        "Model:N",
+                        sort=model_order,
+                        title=None,
+                        axis=alt.Axis(labelAngle=-15, labelColor="#1F2937", labelFontSize=12),
+                    ),
+                    y=alt.Y(
+                        "R²:Q",
+                        title="R² Score",
+                        scale=alt.Scale(domain=[0, 1.08]),
+                        axis=alt.Axis(format=".2f", labelColor="#6B7280", titleColor="#1F2937", gridColor="#EEF2EC"),
+                    ),
+                    color=alt.Color(
+                        "Is Best:N",
+                        scale=alt.Scale(
+                            domain=["Best Model", "Other Models"],
+                            range=["#14532D", "#6EE7B7"],
+                        ),
+                        legend=alt.Legend(title=None, orient="top"),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("Model:N", title="Model"),
+                        alt.Tooltip("R²:Q", title="R² Score", format=".4f"),
+                    ],
+                )
+            )
+
+            r2_labels = (
+                alt.Chart(r2_df)
+                .mark_text(dy=-8, fontSize=12, fontWeight="bold", color="#1F2937")
+                .encode(
+                    x=alt.X("Model:N", sort=model_order),
+                    y=alt.Y("R²:Q"),
+                    text=alt.Text("R²:Q", format=".4f"),
+                )
+            )
+
+            st.altair_chart(
+                (r2_bars + r2_labels).properties(height=300).configure_view(strokeWidth=0),
+                use_container_width=True,
+            )
 
     # ERROR CHART
+    with chart_col2:
+        with st.container(border=True):
+            st.markdown('<div class="section-heading">📉 Error Comparison</div>', unsafe_allow_html=True)
 
-    st.subheader("📉 Error Comparison")
+            error_melted = results_df.melt(
+                id_vars="Model",
+                value_vars=["RMSE", "MAE"],
+                var_name="Metric",
+                value_name="Error Value",
+            )
 
-    st.bar_chart(
-        results_df.set_index("Model")[["RMSE", "MAE"]]
-    )
+            error_chart = (
+                alt.Chart(error_melted)
+                .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5)
+                .encode(
+                    x=alt.X(
+                        "Model:N",
+                        sort=model_order,
+                        title=None,
+                        axis=alt.Axis(labelAngle=-15, labelColor="#1F2937", labelFontSize=12),
+                    ),
+                    xOffset=alt.XOffset("Metric:N"),
+                    y=alt.Y(
+                        "Error Value:Q",
+                        title="Error (hg/ha)",
+                        axis=alt.Axis(format=",.0f", labelColor="#6B7280", titleColor="#1F2937", gridColor="#EEF2EC"),
+                    ),
+                    color=alt.Color(
+                        "Metric:N",
+                        scale=alt.Scale(
+                            domain=["RMSE", "MAE"],
+                            range=["#14532D", "#10B981"],
+                        ),
+                        legend=alt.Legend(title=None, orient="top"),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("Model:N", title="Model"),
+                        alt.Tooltip("Metric:N", title="Metric"),
+                        alt.Tooltip("Error Value:Q", title="Error (hg/ha)", format=",.2f"),
+                    ],
+                )
+                .properties(height=300)
+                .configure_view(strokeWidth=0)
+            )
+
+            st.altair_chart(error_chart, use_container_width=True)
 
     st.caption(
         "These metrics describe this particular random test split. "
@@ -1541,93 +3000,159 @@ elif page == "🤖 Model Performance":
 
 
 # ==========================================================
-# 16. ABOUT PAGE
+# 17. ABOUT PAGE
 # ==========================================================
 
 elif page == "ℹ️ About":
 
-    st.title("ℹ️ About the Project")
-
-    st.write(
-        """
-        Crop Yield Prediction is a Machine Learning application
-        that predicts crop yield using historical agricultural
-        and environmental information.
-        """
+    render_page_header(
+        "ℹ️",
+        "About the Project",
+        "Crop Yield Prediction is a Machine Learning application that predicts crop yield using historical agricultural and environmental information.",
+        badge="Project Overview",
     )
 
-    st.divider()
+    st.markdown('<div class="section-heading">🌱 Input Features</div>', unsafe_allow_html=True)
 
-    st.subheader("🌱 Input Features")
+    feature_cards = [
+        ("🌾", "Crop", "Selected crop type."),
+        ("🌍", "Area / Country", "Selected geographical area."),
+        ("📅", "Year", "Year of prediction."),
+        ("🌧️", "Rainfall", "Average annual rainfall in mm/year."),
+        ("🌡️", "Temperature", "Average temperature in °C."),
+        ("🧪", "Pesticides", "Pesticide usage in tonnes."),
+    ]
 
+    f_row1 = st.columns(3)
+    for col, (icon, fname, fdesc) in zip(f_row1, feature_cards[:3]):
+        with col:
+            render_info_card(fname, fdesc, icon)
+
+    st.write("")
+    f_row2 = st.columns(3)
+    for col, (icon, fname, fdesc) in zip(f_row2, feature_cards[3:]):
+        with col:
+            render_info_card(fname, fdesc, icon)
+
+    st.write("")
+
+    about_col1, about_col2 = st.columns(2)
+
+    with about_col1:
+        st.markdown(
+            """
+            <div class="agri-card">
+                <div class="insight-list-title">🤖 Machine Learning</div>
+                <p style="font-size: 0.94rem; color: #374151; line-height: 1.6; margin-bottom: 12px;">
+                    The prediction page uses the trained model saved in
+                    <code>models/crop_yield_model.pkl</code>.
+                </p>
+                <p style="font-size: 0.94rem; color: #374151; margin-bottom: 8px;">
+                    The Model Performance page compares:
+                </p>
+                <div class="insight-item"><span>📐</span><span>Linear Regression</span></div>
+                <div class="insight-item"><span>🌳</span><span>Decision Tree</span></div>
+                <div class="insight-item"><span>🌲</span><span>Random Forest</span></div>
+                <div class="insight-item"><span>⚡</span><span>Gradient Boosting</span></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with about_col2:
+        st.markdown(
+            """
+            <div class="agri-card">
+                <div class="insight-list-title">🔍 Prediction Analysis</div>
+                <p style="font-size: 0.94rem; color: #374151; line-height: 1.6; margin-bottom: 10px;">
+                    The Data Analysis page is based on the latest prediction.
+                </p>
+                <p style="font-size: 0.94rem; color: #374151; line-height: 1.6; margin-bottom: 10px;">
+                    It compares the predicted yield and the entered agricultural conditions with historical records.
+                </p>
+                <p style="font-size: 0.94rem; color: #374151; line-height: 1.6; margin-bottom: 14px;">
+                    It also provides simple explanations and suggestions for further investigation.
+                </p>
+                <div class="agri-callout" style="margin: 0; font-size: 0.85rem; color: #4B5563;">
+                    The analysis identifies historical patterns, not proven causes. The dataset does not include every factor that affects crop yield, such as soil quality, seed variety, irrigation, sowing date, pest pressure and farming practices.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.write("")
+    st.markdown('<div class="section-heading">📏 Evaluation Metrics</div>', unsafe_allow_html=True)
+
+    met_col1, met_col2, met_col3 = st.columns(3)
+    with met_col1:
+        render_info_card(
+            "R²",
+            "Indicates how much variation in yield is explained by the model on evaluation data.",
+            "📈",
+        )
+    with met_col2:
+        render_info_card(
+            "RMSE",
+            "Measures prediction error and gives greater weight to large errors.",
+            "📉",
+        )
+    with met_col3:
+        render_info_card(
+            "MAE",
+            "Measures the average absolute prediction error.",
+            "🎯",
+        )
+
+    st.write("")
+    st.markdown('<div class="section-heading">🗂️ Dataset Summary</div>', unsafe_allow_html=True)
+
+    ds_col1, ds_col2, ds_col3, ds_col4 = st.columns(4)
+    with ds_col1:
+        render_kpi_card("Crops", df["Item"].nunique(), "Unique crop varieties", "🌾", "#10B981")
+    with ds_col2:
+        render_kpi_card("Areas", df["Area"].nunique(), "Countries & regions", "🌍", "#14532D")
+    with ds_col3:
+        render_kpi_card("Records", f"{len(df):,}", "Historical observations", "📊", "#84CC16")
+    with ds_col4:
+        render_kpi_card("Year Range", f"{int(df['Year'].min())}–{int(df['Year'].max())}", "Data coverage period", "📅", "#10B981")
+
+    st.write("")
+    st.markdown('<div class="section-heading">🧭 How to Use This Application</div>', unsafe_allow_html=True)
+
+    steps = [
+        ("1️⃣", "Go to Predict Yield", "Select a crop, area, year, and enter the climate conditions. Click Predict Yield to generate a prediction."),
+        ("2️⃣", "Review the Result", "The predicted yield value and its quality tier (Poor / Average / Good / Excellent) are shown immediately."),
+        ("3️⃣", "Explore Data Analysis", "Visit the Data Analysis page to compare your prediction with historical benchmarks and review input conditions."),
+        ("4️⃣", "Check Model Performance", "Visit Model Performance to see how four different ML models compare on R², RMSE and MAE metrics."),
+    ]
+
+    step_cols = st.columns(2)
+    for i, (num, title, desc) in enumerate(steps):
+        with step_cols[i % 2]:
+            st.markdown(
+                f"""
+                <div class="agri-card" style="margin-bottom: 10px;">
+                    <div style="display: flex; align-items: flex-start; gap: 12px;">
+                        <div style="font-size: 1.5rem; line-height: 1; flex-shrink: 0;">{num}</div>
+                        <div>
+                            <div style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 0.98rem; font-weight: 700; color: #14532D; margin-bottom: 4px;">{html.escape(title)}</div>
+                            <div style="font-size: 0.91rem; color: #4B5563; line-height: 1.55;">{html.escape(desc)}</div>
+                        </div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+    st.write("")
     st.markdown(
         """
-        - **Crop:** Selected crop type.
-        - **Area / Country:** Selected geographical area.
-        - **Year:** Year of prediction.
-        - **Rainfall:** Average annual rainfall in mm/year.
-        - **Temperature:** Average temperature in °C.
-        - **Pesticides:** Pesticide usage in tonnes.
-        """
-    )
-
-    st.divider()
-
-    st.subheader("🤖 Machine Learning")
-
-    st.write(
-        """
-        The prediction page uses the trained model saved in
-        `models/crop_yield_model.pkl`.
-
-        The Model Performance page compares:
-
-        - Linear Regression
-        - Decision Tree
-        - Random Forest
-        - Gradient Boosting
-        """
-    )
-
-    st.divider()
-
-    st.subheader("🔍 Prediction Analysis")
-
-    st.write(
-        """
-        The Data Analysis page is based on the latest prediction.
-
-        It compares the predicted yield and the entered
-        agricultural conditions with historical records.
-
-        It also provides simple explanations and suggestions
-        for further investigation.
-        """
-    )
-
-    st.caption(
-        "The analysis identifies historical patterns, not proven "
-        "causes. The dataset does not include every factor that "
-        "affects crop yield, such as soil quality, seed variety, "
-        "irrigation, sowing date, pest pressure and farming practices."
-    )
-
-    st.divider()
-
-    st.subheader("📏 Evaluation Metrics")
-
-    st.markdown(
-        """
-        - **R²:** Indicates how much variation in yield is
-          explained by the model on evaluation data.
-        - **RMSE:** Measures prediction error and gives
-          greater weight to large errors.
-        - **MAE:** Measures the average absolute prediction error.
-        """
-    )
-
-    st.divider()
-
-    st.caption(
-        "Dataset: CSV file stored in the project's data/raw folder."
+        <div class="agri-callout">
+            📂 <strong>Dataset source:</strong> CSV file in the project's <code>data/raw</code> folder.
+            Yield values are in <strong>hg/ha</strong> (hectograms per hectare).
+            The trained model is stored at <code>models/crop_yield_model.pkl</code>.
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
